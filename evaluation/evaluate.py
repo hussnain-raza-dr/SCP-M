@@ -1,4 +1,8 @@
-"""Evaluation script: generate samples, compute metrics, plot diagnostics."""
+"""Evaluation script: generate samples, compute metrics, plot diagnostics.
+
+Includes FID (Frechet Inception Distance) computation for quantitative
+comparison between baseline and improved models.
+"""
 
 import argparse
 import json
@@ -9,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
+from torch.nn.functional import adaptive_avg_pool2d
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -145,6 +150,166 @@ def compute_output_stats(generator, config, device, num_samples=1000):
     }
 
 
+# ===================================================================
+# FID (Frechet Inception Distance) Computation
+# ===================================================================
+# FID measures the distance between the distribution of real and generated
+# images in the feature space of a pretrained Inception-v3 network.
+#
+# Lower FID = closer to real data distribution = better quality.
+#
+# This is the standard quantitative metric for comparing GAN quality.
+# ===================================================================
+
+def get_inception_features(images, inception_model, device, batch_size=64):
+    """Extract Inception-v3 pool3 features from a batch of images.
+
+    Args:
+        images: (N, 3, H, W) tensor in [-1, 1].
+        inception_model: pretrained Inception-v3 model.
+        device: torch device.
+        batch_size: processing batch size.
+
+    Returns:
+        (N, 2048) numpy array of features.
+    """
+    inception_model.eval()
+    features_list = []
+
+    # Inception expects 299x299 and specific normalization
+    # We upsample from 32x32 and renormalize from [-1,1] to Inception's range
+    upsample = torch.nn.Upsample(size=(299, 299), mode="bilinear",
+                                  align_corners=False).to(device)
+
+    with torch.no_grad():
+        for i in range(0, len(images), batch_size):
+            batch = images[i:i + batch_size].to(device)
+            # Renormalize: [-1, 1] -> [0, 1] -> Inception normalization
+            batch = (batch + 1.0) / 2.0
+            batch = upsample(batch)
+            # Inception-v3 forward — we need features before the final FC
+            feats = inception_model(batch)
+            # Handle InceptionOutputs named tuple
+            if isinstance(feats, tuple) or hasattr(feats, 'logits'):
+                feats = feats[0] if isinstance(feats, tuple) else feats.logits
+            features_list.append(feats.cpu().numpy())
+
+    return np.concatenate(features_list, axis=0)
+
+
+def compute_fid_from_features(real_features, fake_features):
+    """Compute FID from two sets of Inception features.
+
+    FID = ||mu_r - mu_f||^2 + Tr(Sigma_r + Sigma_f - 2*sqrt(Sigma_r * Sigma_f))
+
+    Args:
+        real_features: (N, D) numpy array.
+        fake_features: (M, D) numpy array.
+
+    Returns:
+        FID score (float). Lower is better.
+    """
+    from scipy import linalg
+
+    mu_r = real_features.mean(axis=0)
+    mu_f = fake_features.mean(axis=0)
+    sigma_r = np.cov(real_features, rowvar=False)
+    sigma_f = np.cov(fake_features, rowvar=False)
+
+    diff = mu_r - mu_f
+
+    # Compute sqrt of product of covariance matrices
+    covmean, _ = linalg.sqrtm(sigma_r @ sigma_f, disp=False)
+
+    # Handle numerical instability
+    if np.iscomplexobj(covmean):
+        covmean = covmean.real
+
+    fid = diff @ diff + np.trace(sigma_r + sigma_f - 2.0 * covmean)
+    return float(fid)
+
+
+def compute_fid(generator, dataloader, config, device, num_samples=5000):
+    """Compute FID between real data and generated samples.
+
+    This requires torchvision's pretrained Inception-v3 model and scipy.
+
+    Args:
+        generator: trained generator model.
+        dataloader: DataLoader for real images.
+        config: config dict.
+        device: torch device.
+        num_samples: number of samples to use for FID computation.
+
+    Returns:
+        FID score (float), or None if dependencies are missing.
+    """
+    try:
+        from torchvision.models import inception_v3
+        from scipy import linalg  # noqa: F401
+    except ImportError:
+        print("Warning: scipy not installed. Skipping FID computation.")
+        print("Install with: pip install scipy")
+        return None
+
+    print("Computing FID score (this may take a while)...")
+
+    # Load pretrained Inception-v3
+    inception = inception_v3(pretrained=True, transform_input=True).to(device)
+    inception.eval()
+
+    latent_dim = config["model"]["latent_dim"]
+    num_classes = config["model"]["num_classes"]
+
+    # Collect real image features
+    real_features = []
+    total_real = 0
+    with torch.no_grad():
+        for images, _ in dataloader:
+            if total_real >= num_samples:
+                break
+            images = images.to(device)
+            # Upsample and renormalize
+            images_up = torch.nn.functional.interpolate(
+                (images + 1.0) / 2.0, size=(299, 299), mode="bilinear",
+                align_corners=False,
+            )
+            feats = inception(images_up)
+            if isinstance(feats, tuple) or hasattr(feats, "logits"):
+                feats = feats[0] if isinstance(feats, tuple) else feats.logits
+            real_features.append(feats.cpu().numpy())
+            total_real += images.size(0)
+
+    real_features = np.concatenate(real_features, axis=0)[:num_samples]
+
+    # Collect fake image features
+    generator.eval()
+    fake_features = []
+    total_fake = 0
+    with torch.no_grad():
+        while total_fake < num_samples:
+            remaining = num_samples - total_fake
+            bs = min(remaining, 64)
+            z = torch.randn(bs, latent_dim, device=device)
+            labels = torch.randint(0, num_classes, (bs,), device=device)
+            fake_images = generator(z, labels)
+            # Upsample and renormalize
+            fake_up = torch.nn.functional.interpolate(
+                (fake_images + 1.0) / 2.0, size=(299, 299), mode="bilinear",
+                align_corners=False,
+            )
+            feats = inception(fake_up)
+            if isinstance(feats, tuple) or hasattr(feats, "logits"):
+                feats = feats[0] if isinstance(feats, tuple) else feats.logits
+            fake_features.append(feats.cpu().numpy())
+            total_fake += bs
+
+    fake_features = np.concatenate(fake_features, axis=0)[:num_samples]
+
+    fid = compute_fid_from_features(real_features, fake_features)
+    return fid
+
+
 def plot_confusion_matrix(real_acc, fake_acc, class_names, save_dir):
     """Plot discriminator accuracy per class as a heatmap.
 
@@ -232,6 +397,14 @@ def main():
         "--output", type=str, default="./results/evaluation",
         help="Directory to save evaluation outputs",
     )
+    parser.add_argument(
+        "--compute-fid", action="store_true",
+        help="Compute FID score (requires scipy and may be slow)",
+    )
+    parser.add_argument(
+        "--fid-samples", type=int, default=5000,
+        help="Number of samples for FID computation",
+    )
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
@@ -307,6 +480,17 @@ def main():
         device=device,
     )
 
+    # 7. FID score (optional)
+    fid_score = None
+    if args.compute_fid:
+        _, test_loader = get_dataloaders(config)
+        fid_score = compute_fid(
+            cgan.generator, test_loader, config, device,
+            num_samples=args.fid_samples,
+        )
+        if fid_score is not None:
+            print(f"\nFID Score: {fid_score:.2f}")
+
     # Save all metrics as JSON
     metrics = {
         "real_accuracy": results["real_accuracy"],
@@ -319,6 +503,9 @@ def main():
         "generation_quality_per_class": dict(zip(class_names, gen_scores)),
         "output_stats": stats,
     }
+    if fid_score is not None:
+        metrics["fid_score"] = fid_score
+
     with open(os.path.join(args.output, "evaluation_metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"\nAll metrics saved to {args.output}/evaluation_metrics.json")

@@ -1,0 +1,98 @@
+# =============================================================================
+# Improved Conditional GAN Configuration
+# =============================================================================
+# Key changes from baseline:
+#   - WGAN-GP loss for stable training without mode collapse
+#   - Spectral normalization on discriminator for Lipschitz constraint
+#   - Residual blocks in generator for better gradient flow
+#   - Higher capacity networks (wider channels)
+#   - Two-timescale learning rates (TTUR): lower lr_g, higher lr_d
+#   - 5:1 discriminator-to-generator training ratio (standard for WGAN-GP)
+#   - Exponential moving average (EMA) of generator weights
+#   - Label smoothing for regularization
+#   - Larger latent dimension for richer representations
+# =============================================================================
+
+model:
+  latent_dim: 128                              # Increased from 100 for richer latent space
+  embed_dim: 64                                # Increased from 50 for better class conditioning
+  num_classes: 10
+  image_channels: 3
+  image_size: 32
+  generator_channels: [512, 256, 128]          # Wider channels: 2x baseline capacity
+  discriminator_channels: [128, 256, 512]      # Wider channels: 2x baseline capacity
+  leaky_relu_slope: 0.2
+  init_std: 0.02
+
+  # --- Improved architecture options ---
+  generator_type: "improved"                   # "baseline" or "improved"
+  discriminator_type: "improved"               # "baseline" or "improved"
+
+  # Generator improvements
+  g_activation: "relu"                         # "relu" or "leaky_relu"
+  g_normalization: "batchnorm"                 # "batchnorm", "layernorm", or "none"
+  g_use_residual: true                         # Residual connections in upsampling blocks
+  g_dropout: 0.0                               # No dropout in generator (hurts quality)
+
+  # Discriminator improvements
+  d_activation: "leaky_relu"                   # "leaky_relu" or "relu"
+  d_normalization: "spectralnorm"              # "batchnorm", "layernorm", "spectralnorm", "none"
+  d_use_minibatch_stddev: true                 # Minibatch discrimination (anti mode-collapse)
+  d_dropout: 0.0                               # No dropout (spectral norm handles regularization)
+
+training:
+  batch_size: 64                               # Smaller batches often help GAN training
+  num_epochs: 100                              # Longer training for convergence
+  lr_g: 0.0001                                 # Lower G learning rate (TTUR)
+  lr_d: 0.0004                                 # Higher D learning rate (TTUR)
+  beta1: 0.0                                   # β1=0 is standard for WGAN-GP
+  beta2: 0.9                                   # β2=0.9 for WGAN-GP (was 0.999)
+  weight_decay_g: 0.0
+  weight_decay_d: 0.0
+  d_steps: 5                                   # 5 D updates per G update (WGAN-GP standard)
+  g_steps: 1
+  label_smooth_real: 0.9                       # One-sided label smoothing
+  label_smooth_fake: 0.0
+
+  # --- Loss function ---
+  loss_type: "wgan-gp"                         # "vanilla", "wgan-gp", "lsgan", "hinge"
+  gp_lambda: 10.0                              # Gradient penalty coefficient (WGAN-GP)
+
+  # --- Exponential Moving Average ---
+  use_ema: true                                # EMA of generator weights
+  ema_decay: 0.999                             # EMA decay rate
+
+  # --- Gradient clipping ---
+  grad_clip_g: 0.0                             # 0 = disabled
+  grad_clip_d: 0.0                             # 0 = disabled
+
+data:
+  dataset: "cifar10"
+  data_root: "./data/cifar10"
+  num_workers: 4
+  pin_memory: true
+  augmentation:
+    horizontal_flip: true
+    horizontal_flip_p: 0.5
+    random_rotation: false
+    random_rotation_degrees: 10
+    color_jitter: false
+    color_jitter_brightness: 0.2
+    color_jitter_contrast: 0.2
+    color_jitter_saturation: 0.2
+    color_jitter_hue: 0.1
+    random_resized_crop: false
+    random_resized_crop_scale_min: 0.8
+    random_resized_crop_scale_max: 1.0
+
+evaluation:
+  save_every: 10
+  sample_every: 5
+  num_sample_per_class: 10
+  log_every: 100
+
+seed: 42
+
+paths:
+  checkpoint_dir: "./checkpoints_improved"
+  results_dir: "./results_improved"

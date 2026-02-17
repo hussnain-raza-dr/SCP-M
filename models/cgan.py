@@ -1,11 +1,14 @@
-"""Complete conditional GAN wrapper with weight initialization and utilities."""
+"""Complete conditional GAN wrapper with weight initialization and utilities.
+
+Supports both baseline and improved architectures via config-driven selection.
+"""
 
 import os
 import torch
 import torch.nn as nn
 
-from models.generator import Generator
-from models.discriminator import Discriminator
+from models.generator import Generator, ImprovedGenerator
+from models.discriminator import Discriminator, ImprovedDiscriminator
 
 
 def weights_init(m):
@@ -30,8 +33,38 @@ def weights_init(m):
         nn.init.normal_(m.weight.data, 0.0, 0.02)
 
 
+def weights_init_improved(m):
+    """Orthogonal initialization for improved architectures.
+
+    Orthogonal init provides better gradient flow in deep residual networks
+    and is the standard choice in BigGAN and SNGAN.
+
+    Spectral-normed layers are skipped (they manage their own scaling).
+    """
+    classname = m.__class__.__name__
+    # Skip spectral-normed modules (they have weight_orig, not weight)
+    if hasattr(m, "weight_orig"):
+        return
+    if "Conv" in classname and hasattr(m, "weight"):
+        nn.init.orthogonal_(m.weight.data)
+    elif "BatchNorm" in classname or "GroupNorm" in classname:
+        if hasattr(m, "weight") and m.weight is not None:
+            nn.init.normal_(m.weight.data, 1.0, 0.02)
+        if hasattr(m, "bias") and m.bias is not None:
+            nn.init.zeros_(m.bias.data)
+    elif classname == "Linear":
+        nn.init.orthogonal_(m.weight.data)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias.data)
+    elif classname == "Embedding":
+        nn.init.orthogonal_(m.weight.data)
+
+
 class ConditionalGAN:
-    """Wrapper holding Generator and Discriminator with helper methods."""
+    """Wrapper holding Generator and Discriminator with helper methods.
+
+    Automatically selects baseline or improved architectures based on config.
+    """
 
     def __init__(self, config, device):
         model_cfg = config["model"]
@@ -39,20 +72,57 @@ class ConditionalGAN:
         self.num_classes = model_cfg["num_classes"]
         self.device = device
 
-        self.generator = Generator(
-            latent_dim=model_cfg["latent_dim"],
-            embed_dim=model_cfg["embed_dim"],
-            num_classes=model_cfg["num_classes"],
-            image_channels=model_cfg["image_channels"],
-        )
-        self.discriminator = Discriminator(
-            num_classes=model_cfg["num_classes"],
-            image_channels=model_cfg["image_channels"],
-        )
+        g_type = model_cfg.get("generator_type", "baseline")
+        d_type = model_cfg.get("discriminator_type", "baseline")
 
-        # Apply DCGAN weight initialization
-        self.generator.apply(weights_init)
-        self.discriminator.apply(weights_init)
+        # --- Build Generator ---
+        if g_type == "improved":
+            self.generator = ImprovedGenerator(
+                latent_dim=model_cfg["latent_dim"],
+                embed_dim=model_cfg["embed_dim"],
+                num_classes=model_cfg["num_classes"],
+                image_channels=model_cfg["image_channels"],
+                channels=model_cfg.get("generator_channels", [512, 256, 128]),
+                normalization=model_cfg.get("g_normalization", "batchnorm"),
+                activation=model_cfg.get("g_activation", "relu"),
+            )
+        else:
+            self.generator = Generator(
+                latent_dim=model_cfg["latent_dim"],
+                embed_dim=model_cfg["embed_dim"],
+                num_classes=model_cfg["num_classes"],
+                image_channels=model_cfg["image_channels"],
+            )
+
+        # --- Build Discriminator ---
+        if d_type == "improved":
+            self.discriminator = ImprovedDiscriminator(
+                num_classes=model_cfg["num_classes"],
+                image_channels=model_cfg["image_channels"],
+                channels=model_cfg.get("discriminator_channels", [128, 256, 512]),
+                normalization=model_cfg.get("d_normalization", "spectralnorm"),
+                activation=model_cfg.get("d_activation", "leaky_relu"),
+                use_minibatch_stddev=model_cfg.get("d_use_minibatch_stddev", True),
+            )
+        else:
+            self.discriminator = Discriminator(
+                num_classes=model_cfg["num_classes"],
+                image_channels=model_cfg["image_channels"],
+            )
+
+        # Apply weight initialization
+        if g_type == "improved":
+            self.generator.apply(weights_init_improved)
+        else:
+            self.generator.apply(weights_init)
+
+        # Only apply weight init to D if not using spectral norm
+        # (spectral norm manages its own weight scaling)
+        d_norm = model_cfg.get("d_normalization", "batchnorm")
+        if d_type == "improved" and d_norm == "spectralnorm":
+            self.discriminator.apply(weights_init_improved)
+        else:
+            self.discriminator.apply(weights_init)
 
         # Move to device
         self.generator.to(device)
@@ -77,17 +147,21 @@ class ConditionalGAN:
             images = self.generator(z, labels)
         return images, labels
 
-    def save_checkpoint(self, path, epoch, optimizer_g, optimizer_d, history):
+    def save_checkpoint(self, path, epoch, optimizer_g, optimizer_d, history,
+                        G_ema=None):
         """Save full training state to disk."""
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        torch.save({
+        state = {
             "epoch": epoch,
             "generator_state_dict": self.generator.state_dict(),
             "discriminator_state_dict": self.discriminator.state_dict(),
             "optimizer_g_state_dict": optimizer_g.state_dict(),
             "optimizer_d_state_dict": optimizer_d.state_dict(),
             "history": history,
-        }, path)
+        }
+        if G_ema is not None:
+            state["generator_ema_state_dict"] = G_ema.state_dict()
+        torch.save(state, path)
 
     def load_checkpoint(self, path, optimizer_g=None, optimizer_d=None):
         """Load training state from disk.
