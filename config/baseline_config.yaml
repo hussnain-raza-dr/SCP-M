@@ -1,0 +1,55 @@
+model:
+  latent_dim: 100
+  embed_dim: 50
+  num_classes: 10
+  image_channels: 3
+  image_size: 32
+  generator_channels: [256, 128, 64]
+  discriminator_channels: [64, 128, 256]
+  leaky_relu_slope: 0.2
+  init_std: 0.02
+
+training:
+  batch_size: 128
+  num_epochs: 50
+  lr_g: 0.0002
+  lr_d: 0.0002
+  beta1: 0.5
+  beta2: 0.999
+  weight_decay_g: 0.0
+  weight_decay_d: 0.0
+  d_steps: 1
+  g_steps: 1
+  label_smooth_real: 1.0
+  label_smooth_fake: 0.0
+
+data:
+  dataset: "cifar10"
+  data_root: "./data/cifar10"
+  num_workers: 4
+  pin_memory: true
+  augmentation:
+    horizontal_flip: true
+    horizontal_flip_p: 0.5
+    random_rotation: false
+    random_rotation_degrees: 10
+    color_jitter: false
+    color_jitter_brightness: 0.2
+    color_jitter_contrast: 0.2
+    color_jitter_saturation: 0.2
+    color_jitter_hue: 0.1
+    random_resized_crop: false
+    random_resized_crop_scale_min: 0.8
+    random_resized_crop_scale_max: 1.0
+
+evaluation:
+  save_every: 10
+  sample_every: 5
+  num_sample_per_class: 10
+  log_every: 100
+
+seed: 42
+
+paths:
+  checkpoint_dir: "./checkpoints"
+  results_dir: "./results"
