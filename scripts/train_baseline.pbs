@@ -1,0 +1,68 @@
+#!/bin/bash
+# =============================================================================
+# PBS Script — Baseline Conditional GAN Training
+# =============================================================================
+# Submit:  qsub scripts/train_baseline.pbs
+# Monitor: qstat -u $USER
+# Output:  logs/baseline_train.o<JOBID>, logs/baseline_train.e<JOBID>
+# =============================================================================
+
+# --- PBS Directives ---
+#PBS -N cgan_baseline                     # Job name
+#PBS -l select=1:ncpus=4:ngpus=1:mem=16gb # 1 node, 4 CPUs, 1 GPU, 16 GB RAM
+#PBS -l walltime=04:00:00                 # Max wall time (4 hours for 50 epochs)
+#PBS -q gpu                               # GPU queue (adjust to your cluster)
+#PBS -o logs/baseline_train.out           # Standard output log
+#PBS -e logs/baseline_train.err           # Standard error log
+#PBS -m abe                               # Email on abort/begin/end
+# #PBS -M your.email@university.edu       # Uncomment and set your email
+
+# --- Environment Setup ---
+set -euo pipefail
+
+# Navigate to project directory
+# Option A: Use PBS_O_WORKDIR (directory where qsub was called)
+cd "${PBS_O_WORKDIR:-$(dirname "$0")/..}"
+PROJECT_DIR="$(pwd)"
+
+echo "============================================="
+echo " Baseline GAN Training"
+echo " Job ID:    ${PBS_JOBID:-local}"
+echo " Node:      $(hostname)"
+echo " Date:      $(date)"
+echo " Project:   ${PROJECT_DIR}"
+echo "============================================="
+
+# Create log directory
+mkdir -p "${PROJECT_DIR}/logs"
+
+# Load cluster modules (adjust to your cluster)
+# module purge
+# module load python/3.10
+# module load cuda/12.1
+# module load cudnn/8.9
+
+# Activate virtual environment
+source "${PROJECT_DIR}/venv/bin/activate"
+
+# Verify GPU availability
+echo ""
+echo "--- GPU Info ---"
+nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>/dev/null || echo "nvidia-smi not available"
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'Device: {torch.cuda.get_device_name(0)}') if torch.cuda.is_available() else None"
+echo ""
+
+# --- Run Training ---
+echo "--- Starting Baseline Training ---"
+echo "Config: config/baseline_config.yaml"
+echo "Epochs: 50, Batch size: 128, Loss: vanilla"
+echo ""
+
+python training/train.py \
+    --config config/baseline_config.yaml
+
+echo ""
+echo "--- Baseline Training Complete ---"
+echo "Checkpoints: ${PROJECT_DIR}/checkpoints/"
+echo "Results:     ${PROJECT_DIR}/results/"
+echo "Finished:    $(date)"

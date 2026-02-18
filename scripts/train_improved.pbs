@@ -1,0 +1,71 @@
+#!/bin/bash
+# =============================================================================
+# PBS Script — Improved Conditional GAN Training (WGAN-GP + SpectralNorm)
+# =============================================================================
+# Submit:  qsub scripts/train_improved.pbs
+# Monitor: qstat -u $USER
+# Output:  logs/improved_train.o<JOBID>, logs/improved_train.e<JOBID>
+#
+# This job takes longer than baseline due to:
+#   - 100 epochs (vs 50)
+#   - 5:1 D:G ratio (5x more D updates per batch)
+#   - Gradient penalty computation (extra forward + backward pass)
+#   - Larger model (3.9M G + 4.8M D params vs 1.3M + 0.7M)
+# =============================================================================
+
+# --- PBS Directives ---
+#PBS -N cgan_improved                     # Job name
+#PBS -l select=1:ncpus=4:ngpus=1:mem=24gb # 1 node, 4 CPUs, 1 GPU, 24 GB RAM
+#PBS -l walltime=12:00:00                 # Max wall time (12 hours for 100 epochs + GP)
+#PBS -q gpu                               # GPU queue (adjust to your cluster)
+#PBS -o logs/improved_train.out           # Standard output log
+#PBS -e logs/improved_train.err           # Standard error log
+#PBS -m abe                               # Email on abort/begin/end
+# #PBS -M your.email@university.edu       # Uncomment and set your email
+
+# --- Environment Setup ---
+set -euo pipefail
+
+cd "${PBS_O_WORKDIR:-$(dirname "$0")/..}"
+PROJECT_DIR="$(pwd)"
+
+echo "============================================="
+echo " Improved GAN Training (WGAN-GP)"
+echo " Job ID:    ${PBS_JOBID:-local}"
+echo " Node:      $(hostname)"
+echo " Date:      $(date)"
+echo " Project:   ${PROJECT_DIR}"
+echo "============================================="
+
+mkdir -p "${PROJECT_DIR}/logs"
+
+# Load cluster modules (adjust to your cluster)
+# module purge
+# module load python/3.10
+# module load cuda/12.1
+# module load cudnn/8.9
+
+source "${PROJECT_DIR}/venv/bin/activate"
+
+# Verify GPU
+echo ""
+echo "--- GPU Info ---"
+nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>/dev/null || echo "nvidia-smi not available"
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'Device: {torch.cuda.get_device_name(0)}') if torch.cuda.is_available() else None"
+echo ""
+
+# --- Run Training ---
+echo "--- Starting Improved Training ---"
+echo "Config: config/improved_config.yaml"
+echo "Epochs: 100, Batch size: 64, Loss: WGAN-GP"
+echo "D steps: 5, EMA: enabled, SpectralNorm: enabled"
+echo ""
+
+python training/train.py \
+    --config config/improved_config.yaml
+
+echo ""
+echo "--- Improved Training Complete ---"
+echo "Checkpoints: ${PROJECT_DIR}/checkpoints_improved/"
+echo "Results:     ${PROJECT_DIR}/results_improved/"
+echo "Finished:    $(date)"
