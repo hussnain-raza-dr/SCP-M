@@ -239,10 +239,17 @@ def train(config, resume_path=None):
                 torch.nn.utils.clip_grad_norm_(D.parameters(), grad_clip_d)
             optimizer_d.step()
 
-            # Discriminator accuracy (use sigmoid for interpretability)
+            # Discriminator accuracy
+            # For vanilla/lsgan: sigmoid-based (output is logit for BCE)
+            # For hinge/wgan-gp: sign-based (output is unbounded critic score)
             with torch.no_grad():
-                d_real_acc = (torch.sigmoid(real_output) > 0.5).float().mean().item()
-                d_fake_acc = (torch.sigmoid(fake_output) < 0.5).float().mean().item()
+                if loss_type in ("hinge", "wgan-gp"):
+                    # Critic is correct when D(real) > 0 and D(fake) < 0
+                    d_real_acc = (real_output > 0).float().mean().item()
+                    d_fake_acc = (fake_output < 0).float().mean().item()
+                else:
+                    d_real_acc = (torch.sigmoid(real_output) > 0.5).float().mean().item()
+                    d_fake_acc = (torch.sigmoid(fake_output) < 0.5).float().mean().item()
 
             epoch_d_loss += d_loss.item()
             epoch_d_real_acc += d_real_acc

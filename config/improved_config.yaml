@@ -2,69 +2,73 @@
 # Improved Conditional GAN Configuration
 # =============================================================================
 # Key changes from baseline:
-#   - WGAN-GP loss for stable training without mode collapse
-#   - Spectral normalization on discriminator for Lipschitz constraint
+#   - Hinge loss + spectral normalization (proven SNGAN/BigGAN approach)
 #   - Residual blocks in generator for better gradient flow
 #   - Higher capacity networks (wider channels)
 #   - Two-timescale learning rates (TTUR): lower lr_g, higher lr_d
-#   - 5:1 discriminator-to-generator training ratio (standard for WGAN-GP)
 #   - Exponential moving average (EMA) of generator weights
-#   - Label smoothing for regularization
+#   - Minibatch stddev for mode-collapse detection
 #   - Larger latent dimension for richer representations
+#
+# NOTE: Spectral norm enforces the Lipschitz constraint that hinge loss
+# requires. Do NOT combine spectral norm with WGAN-GP (gradient penalty),
+# as double-constraining the critic causes it to collapse.
 # =============================================================================
 
 model:
-  latent_dim: 128                              # Increased from 100 for richer latent space
-  embed_dim: 64                                # Increased from 50 for better class conditioning
+  latent_dim: 128
+  embed_dim: 64
   num_classes: 10
   image_channels: 3
   image_size: 32
-  generator_channels: [512, 256, 128]          # Wider channels: 2x baseline capacity
-  discriminator_channels: [128, 256, 512]      # Wider channels: 2x baseline capacity
+  generator_channels: [512, 256, 128]
+  discriminator_channels: [128, 256, 512]
   leaky_relu_slope: 0.2
   init_std: 0.02
 
-  # --- Improved architecture options ---
-  generator_type: "improved"                   # "baseline" or "improved"
-  discriminator_type: "improved"               # "baseline" or "improved"
+  # Architecture selection
+  generator_type: "improved"
+  discriminator_type: "improved"
 
-  # Generator improvements
-  g_activation: "relu"                         # "relu" or "leaky_relu"
-  g_normalization: "batchnorm"                 # "batchnorm", "layernorm", or "none"
-  g_use_residual: true                         # Residual connections in upsampling blocks
-  g_dropout: 0.0                               # No dropout in generator (hurts quality)
+  # Generator: BN + ReLU + residual (standard for G)
+  g_activation: "relu"
+  g_normalization: "batchnorm"
+  g_use_residual: true
+  g_dropout: 0.0
 
-  # Discriminator improvements
-  d_activation: "leaky_relu"                   # "leaky_relu" or "relu"
-  d_normalization: "spectralnorm"              # "batchnorm", "layernorm", "spectralnorm", "none"
-  d_use_minibatch_stddev: true                 # Minibatch discrimination (anti mode-collapse)
-  d_dropout: 0.0                               # No dropout (spectral norm handles regularization)
+  # Discriminator: spectral norm + LeakyReLU (SNGAN standard)
+  d_activation: "leaky_relu"
+  d_normalization: "spectralnorm"
+  d_use_minibatch_stddev: true
+  d_dropout: 0.0
 
 training:
-  batch_size: 64                               # Smaller batches often help GAN training
-  num_epochs: 100                              # Longer training for convergence
-  lr_g: 0.0001                                 # Lower G learning rate (TTUR)
-  lr_d: 0.0004                                 # Higher D learning rate (TTUR)
-  beta1: 0.0                                   # β1=0 is standard for WGAN-GP
-  beta2: 0.9                                   # β2=0.9 for WGAN-GP (was 0.999)
+  batch_size: 64
+  num_epochs: 100
+  lr_g: 0.0002
+  lr_d: 0.0002
+  beta1: 0.0
+  beta2: 0.999
   weight_decay_g: 0.0
   weight_decay_d: 0.0
-  d_steps: 5                                   # 5 D updates per G update (WGAN-GP standard)
+  d_steps: 1
   g_steps: 1
-  label_smooth_real: 0.9                       # One-sided label smoothing
+  label_smooth_real: 1.0
   label_smooth_fake: 0.0
 
-  # --- Loss function ---
-  loss_type: "wgan-gp"                         # "vanilla", "wgan-gp", "lsgan", "hinge"
-  gp_lambda: 10.0                              # Gradient penalty coefficient (WGAN-GP)
+  # Hinge loss — the standard loss for spectral-norm GANs
+  # Unlike WGAN-GP, hinge loss does NOT need gradient penalty because
+  # spectral normalization already enforces the Lipschitz constraint.
+  loss_type: "hinge"
+  gp_lambda: 10.0
 
-  # --- Exponential Moving Average ---
-  use_ema: true                                # EMA of generator weights
-  ema_decay: 0.999                             # EMA decay rate
+  # Exponential Moving Average of generator weights
+  use_ema: true
+  ema_decay: 0.999
 
-  # --- Gradient clipping ---
-  grad_clip_g: 0.0                             # 0 = disabled
-  grad_clip_d: 0.0                             # 0 = disabled
+  # Gradient clipping (0 = disabled)
+  grad_clip_g: 0.0
+  grad_clip_d: 0.0
 
 data:
   dataset: "cifar10"
