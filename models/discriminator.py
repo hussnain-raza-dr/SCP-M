@@ -15,44 +15,63 @@ from torch.nn.utils import spectral_norm
 class Discriminator(nn.Module):
     """Conditional DCGAN Discriminator with projection conditioning.
 
-    Architecture:
-        Conv2d 3->64   (32x32 -> 16x16, stride=2)
-        Conv2d 64->128 (16x16 -> 8x8,   stride=2)
-        Conv2d 128->256(8x8   -> 4x4,   stride=2)
-        Flatten -> 4096
-        Linear(4096, 1) + projection(class_embed dot features)
+    Standard strided-conv downsampling architecture. Supports configurable
+    channel widths and normalization (batchnorm or spectralnorm).
 
-    No sigmoid at output — raw logits (used with BCEWithLogitsLoss).
+    Architecture (default channels [64, 128, 256]):
+        Conv2d 3->ch0   (32x32 -> 16x16, stride=2)
+        Conv2d ch0->ch1  (16x16 -> 8x8,   stride=2)
+        Conv2d ch1->ch2  (8x8   -> 4x4,   stride=2)
+        Flatten -> ch2*4*4
+        Linear(ch2*4*4, 1) + projection(class_embed dot features)
+
+    No sigmoid at output — raw logits/scores.
     """
 
-    def __init__(self, num_classes=10, image_channels=3):
+    def __init__(self, num_classes=10, image_channels=3, channels=None,
+                 normalization="batchnorm"):
         super().__init__()
 
+        if channels is None:
+            channels = [64, 128, 256]
+
+        ch0, ch1, ch2 = channels
+        use_sn = (normalization == "spectralnorm")
+        wrap = spectral_norm if use_sn else lambda x: x
+
         # Convolutional feature extraction
-        self.features = nn.Sequential(
-            # Block 1: 3x32x32 -> 64x16x16 (no BatchNorm on first layer)
-            nn.Conv2d(image_channels, 64, kernel_size=4, stride=2, padding=1,
-                      bias=False),
+        # Block 1: no normalization on first layer (DCGAN convention)
+        layers = [
+            wrap(nn.Conv2d(image_channels, ch0, kernel_size=4, stride=2,
+                           padding=1, bias=not use_sn)),
             nn.LeakyReLU(0.2, inplace=True),
+        ]
 
-            # Block 2: 64x16x16 -> 128x8x8
-            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2, inplace=True),
+        # Block 2
+        layers.append(wrap(nn.Conv2d(ch0, ch1, kernel_size=4, stride=2,
+                                     padding=1, bias=not use_sn)))
+        if not use_sn:
+            layers.append(nn.BatchNorm2d(ch1))
+        layers.append(nn.LeakyReLU(0.2, inplace=True))
 
-            # Block 3: 128x8x8 -> 256x4x4
-            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.2, inplace=True),
-        )
+        # Block 3
+        layers.append(wrap(nn.Conv2d(ch1, ch2, kernel_size=4, stride=2,
+                                     padding=1, bias=not use_sn)))
+        if not use_sn:
+            layers.append(nn.BatchNorm2d(ch2))
+        layers.append(nn.LeakyReLU(0.2, inplace=True))
 
-        feature_dim = 256 * 4 * 4  # 4096
+        self.features = nn.Sequential(*layers)
+
+        feature_dim = ch2 * 4 * 4
 
         # Unconditional output head
-        self.fc = nn.Linear(feature_dim, 1)
+        self.fc = wrap(nn.Linear(feature_dim, 1))
 
         # Projection discriminator: class embedding in feature space
         self.label_embedding = nn.Embedding(num_classes, feature_dim)
+        if use_sn:
+            self.label_embedding = spectral_norm(self.label_embedding)
 
     def forward(self, images, labels):
         """Classify images as real/fake conditioned on class labels.
@@ -65,21 +84,21 @@ class Discriminator(nn.Module):
             (B, 1) raw logits (no sigmoid).
         """
         # Extract features
-        x = self.features(images)                       # (B, 256, 4, 4)
-        x = x.view(x.size(0), -1)                      # (B, 4096)
+        x = self.features(images)
+        x = x.view(x.size(0), -1)
 
         # Unconditional score
-        out = self.fc(x)                                # (B, 1)
+        out = self.fc(x)
 
         # Projection conditioning: dot product of features and class embedding
-        embed = self.label_embedding(labels)            # (B, 4096)
-        proj = torch.sum(x * embed, dim=1, keepdim=True)  # (B, 1)
+        embed = self.label_embedding(labels)
+        proj = torch.sum(x * embed, dim=1, keepdim=True)
 
-        return out + proj                               # (B, 1)
+        return out + proj
 
 
 # ---------------------------------------------------------------------------
-# Improved Discriminator
+# Improved Discriminator (residual architecture)
 # ---------------------------------------------------------------------------
 
 class ResidualDownsampleBlock(nn.Module):

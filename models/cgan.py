@@ -92,6 +92,7 @@ class ConditionalGAN:
                 embed_dim=model_cfg["embed_dim"],
                 num_classes=model_cfg["num_classes"],
                 image_channels=model_cfg["image_channels"],
+                channels=model_cfg.get("generator_channels", [256, 128, 64]),
             )
 
         # --- Build Discriminator ---
@@ -108,6 +109,8 @@ class ConditionalGAN:
             self.discriminator = Discriminator(
                 num_classes=model_cfg["num_classes"],
                 image_channels=model_cfg["image_channels"],
+                channels=model_cfg.get("discriminator_channels", [64, 128, 256]),
+                normalization=model_cfg.get("d_normalization", "batchnorm"),
             )
 
         # Apply weight initialization

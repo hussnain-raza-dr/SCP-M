@@ -12,49 +12,58 @@ import torch.nn as nn
 
 
 class Generator(nn.Module):
-    """Conditional DCGAN Generator (baseline).
+    """Conditional DCGAN Generator.
 
-    Architecture:
-        (nz + nembed) -> Linear -> 256x4x4
-        -> ConvTranspose2d 256->128 (8x8)
-        -> ConvTranspose2d 128->64  (16x16)
-        -> ConvTranspose2d 64->3    (32x32)
+    Standard ConvTranspose2d upsampling architecture with BatchNorm + ReLU.
+    Supports configurable channel widths for capacity tuning.
+
+    Architecture (default channels [256, 128, 64]):
+        (nz + nembed) -> Linear -> ch0 x 4x4
+        -> ConvTranspose2d ch0->ch1 (8x8)
+        -> ConvTranspose2d ch1->ch2 (16x16)
+        -> ConvTranspose2d ch2->3   (32x32)
 
     Conditioning: class embedding concatenated to latent vector z.
     """
 
     def __init__(self, latent_dim=100, embed_dim=50, num_classes=10,
-                 image_channels=3):
+                 image_channels=3, channels=None):
         super().__init__()
         self.latent_dim = latent_dim
         self.embed_dim = embed_dim
 
+        if channels is None:
+            channels = [256, 128, 64]
+
+        ch0, ch1, ch2 = channels
+
         # Class embedding
         self.label_embedding = nn.Embedding(num_classes, embed_dim)
 
-        # Project and reshape: (nz + nembed) -> 256 * 4 * 4
+        # Project and reshape: (nz + nembed) -> ch0 * 4 * 4
         self.project = nn.Sequential(
-            nn.Linear(latent_dim + embed_dim, 256 * 4 * 4, bias=False),
-            nn.BatchNorm1d(256 * 4 * 4),
+            nn.Linear(latent_dim + embed_dim, ch0 * 4 * 4, bias=False),
+            nn.BatchNorm1d(ch0 * 4 * 4),
             nn.ReLU(True),
         )
+        self.ch0 = ch0
 
         # Upsampling blocks
         self.conv_blocks = nn.Sequential(
-            # Block 1: 256x4x4 -> 128x8x8
-            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1,
+            # Block 1: ch0 x 4x4 -> ch1 x 8x8
+            nn.ConvTranspose2d(ch0, ch1, kernel_size=4, stride=2, padding=1,
                                bias=False),
-            nn.BatchNorm2d(128),
+            nn.BatchNorm2d(ch1),
             nn.ReLU(True),
 
-            # Block 2: 128x8x8 -> 64x16x16
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1,
+            # Block 2: ch1 x 8x8 -> ch2 x 16x16
+            nn.ConvTranspose2d(ch1, ch2, kernel_size=4, stride=2, padding=1,
                                bias=False),
-            nn.BatchNorm2d(64),
+            nn.BatchNorm2d(ch2),
             nn.ReLU(True),
 
-            # Block 3 (output): 64x16x16 -> 3x32x32
-            nn.ConvTranspose2d(64, image_channels, kernel_size=4, stride=2,
+            # Block 3 (output): ch2 x 16x16 -> 3 x 32x32
+            nn.ConvTranspose2d(ch2, image_channels, kernel_size=4, stride=2,
                                padding=1, bias=False),
             nn.Tanh(),
         )
@@ -74,8 +83,8 @@ class Generator(nn.Module):
         x = torch.cat([z, embedding], dim=1)            # (B, latent_dim + embed_dim)
 
         # Project and reshape to feature map
-        x = self.project(x)                             # (B, 256*4*4)
-        x = x.view(x.size(0), 256, 4, 4)               # (B, 256, 4, 4)
+        x = self.project(x)                             # (B, ch0*4*4)
+        x = x.view(x.size(0), self.ch0, 4, 4)          # (B, ch0, 4, 4)
 
         # Upsample to image
         x = self.conv_blocks(x)                         # (B, 3, 32, 32)
