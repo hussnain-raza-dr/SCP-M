@@ -13,14 +13,15 @@
 # =============================================================================
 
 # --- PBS Directives ---
-#PBS -N cgan_evaluate                     # Job name
-#PBS -l select=1:ncpus=4:ngpus=1:mem=16gb # 1 node, 4 CPUs, 1 GPU, 16 GB RAM
-#PBS -l walltime=02:00:00                 # 2 hours (FID is computationally expensive)
-#PBS -q gpu                               # GPU queue (adjust to your cluster)
-#PBS -o logs/evaluate.out                 # Standard output log
-#PBS -e logs/evaluate.err                 # Standard error log
-#PBS -m abe                               # Email on abort/begin/end
-# #PBS -M your.email@university.edu       # Uncomment and set your email
+#PBS -N cgan_evaluate
+#PBS -l select=1:ncpus=4:ngpus=1:mem=16gb
+#PBS -l walltime=02:00:00
+#PBS -q gpu
+#PBS -o logs/evaluate.out
+#PBS -e logs/evaluate.err
+#PBS -m abe
+## Uncomment and set your email:
+## PBS -M your.email@university.edu
 
 # --- Environment Setup ---
 set -euo pipefail
@@ -140,7 +141,6 @@ if len(results) == 2:
         sign = '+' if d > 0 else ''
         print(f'{key:<35s} {b:>11.4f}  {i:>11.4f}  {sign}{d:>8.4f}')
 
-    # Pixel stats
     for key in ['pixel_mean', 'pixel_std']:
         b = results['Baseline']['output_stats'][key]
         i = results['Improved']['output_stats'][key]
@@ -148,7 +148,6 @@ if len(results) == 2:
         sign = '+' if d > 0 else ''
         print(f'{key:<35s} {b:>11.4f}  {i:>11.4f}  {sign}{d:>8.4f}')
 
-    # FID (lower is better)
     if 'fid_score' in results['Baseline'] and 'fid_score' in results['Improved']:
         b = results['Baseline']['fid_score']
         i = results['Improved']['fid_score']
@@ -156,7 +155,6 @@ if len(results) == 2:
         sign = '+' if d > 0 else ''
         print(f'{\"fid_score (lower=better)\":<35s} {b:>11.2f}  {i:>11.2f}  {sign}{d:>8.2f}')
 
-    # Per-class generation quality (mean D score, lower = G fools D better)
     print(f'')
     print(f'Per-class D(G(z)) scores (lower = G fools D better):')
     print(f'{\"Class\":<15s} {\"Baseline\":>10s} {\"Improved\":>10s}')

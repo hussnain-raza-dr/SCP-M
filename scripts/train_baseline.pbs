@@ -4,24 +4,24 @@
 # =============================================================================
 # Submit:  qsub scripts/train_baseline.pbs
 # Monitor: qstat -u $USER
-# Output:  logs/baseline_train.o<JOBID>, logs/baseline_train.e<JOBID>
+# Output:  logs/baseline_train.out, logs/baseline_train.err
 # =============================================================================
 
 # --- PBS Directives ---
-#PBS -N cgan_baseline                     # Job name
-#PBS -l select=1:ncpus=4:ngpus=1:mem=16gb # 1 node, 4 CPUs, 1 GPU, 16 GB RAM
-#PBS -l walltime=04:00:00                 # Max wall time (4 hours for 50 epochs)
-#PBS -q gpu                               # GPU queue (adjust to your cluster)
-#PBS -o logs/baseline_train.out           # Standard output log
-#PBS -e logs/baseline_train.err           # Standard error log
-#PBS -m abe                               # Email on abort/begin/end
-# #PBS -M your.email@university.edu       # Uncomment and set your email
+#PBS -N cgan_baseline
+#PBS -l select=1:ncpus=4:ngpus=1:mem=16gb
+#PBS -l walltime=04:00:00
+#PBS -q gpu
+#PBS -o logs/baseline_train.out
+#PBS -e logs/baseline_train.err
+#PBS -m abe
+## Uncomment and set your email:
+## PBS -M your.email@university.edu
 
 # --- Environment Setup ---
 set -euo pipefail
 
 # Navigate to project directory
-# Option A: Use PBS_O_WORKDIR (directory where qsub was called)
 cd "${PBS_O_WORKDIR:-$(dirname "$0")/..}"
 PROJECT_DIR="$(pwd)"
 

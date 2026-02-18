@@ -4,7 +4,7 @@
 # =============================================================================
 # Submit:  qsub scripts/train_improved.pbs
 # Monitor: qstat -u $USER
-# Output:  logs/improved_train.o<JOBID>, logs/improved_train.e<JOBID>
+# Output:  logs/improved_train.out, logs/improved_train.err
 #
 # This job takes longer than baseline due to:
 #   - 100 epochs (vs 50)
@@ -14,14 +14,15 @@
 # =============================================================================
 
 # --- PBS Directives ---
-#PBS -N cgan_improved                     # Job name
-#PBS -l select=1:ncpus=4:ngpus=1:mem=24gb # 1 node, 4 CPUs, 1 GPU, 24 GB RAM
-#PBS -l walltime=12:00:00                 # Max wall time (12 hours for 100 epochs + GP)
-#PBS -q gpu                               # GPU queue (adjust to your cluster)
-#PBS -o logs/improved_train.out           # Standard output log
-#PBS -e logs/improved_train.err           # Standard error log
-#PBS -m abe                               # Email on abort/begin/end
-# #PBS -M your.email@university.edu       # Uncomment and set your email
+#PBS -N cgan_improved
+#PBS -l select=1:ncpus=4:ngpus=1:mem=24gb
+#PBS -l walltime=12:00:00
+#PBS -q gpu
+#PBS -o logs/improved_train.out
+#PBS -e logs/improved_train.err
+#PBS -m abe
+## Uncomment and set your email:
+## PBS -M your.email@university.edu
 
 # --- Environment Setup ---
 set -euo pipefail
