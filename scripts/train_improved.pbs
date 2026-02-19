@@ -1,22 +1,21 @@
 #!/bin/bash
 # =============================================================================
-# PBS Script — Improved Conditional GAN Training (WGAN-GP + SpectralNorm)
+# PBS Script — Improved Conditional GAN Training (SNGAN + TTUR + Hinge)
 # =============================================================================
 # Submit:  qsub scripts/train_improved.pbs
 # Monitor: qstat -u $USER
 # Output:  logs/improved_train.out, logs/improved_train.err
 #
 # This job takes longer than baseline due to:
-#   - 100 epochs (vs 50)
-#   - 5:1 D:G ratio (5x more D updates per batch)
-#   - Gradient penalty computation (extra forward + backward pass)
-#   - Larger model (3.9M G + 4.8M D params vs 1.3M + 0.7M)
+#   - 200 epochs (vs 50)
+#   - 2:1 D:G ratio (2x more D updates per batch)
+#   - Larger model with wider channels
 # =============================================================================
 
 # --- PBS Directives ---
 #PBS -N cgan_improved
 #PBS -l select=1:ncpus=4:ngpus=1:mem=24gb
-#PBS -l walltime=12:00:00
+#PBS -l walltime=24:00:00
 #PBS -q gpu
 #PBS -o logs/improved_train.out
 #PBS -e logs/improved_train.err
@@ -31,7 +30,7 @@ cd "${PBS_O_WORKDIR:-$(dirname "$0")/..}"
 PROJECT_DIR="$(pwd)"
 
 echo "============================================="
-echo " Improved GAN Training (WGAN-GP)"
+echo " Improved GAN Training (SNGAN + TTUR + Hinge)"
 echo " Job ID:    ${PBS_JOBID:-local}"
 echo " Node:      $(hostname)"
 echo " Date:      $(date)"
@@ -58,8 +57,8 @@ echo ""
 # --- Run Training ---
 echo "--- Starting Improved Training ---"
 echo "Config: config/improved_config.yaml"
-echo "Epochs: 100, Batch size: 64, Loss: WGAN-GP"
-echo "D steps: 5, EMA: enabled, SpectralNorm: enabled"
+echo "Epochs: 200, Batch size: 64, Loss: Hinge"
+echo "D steps: 2, TTUR: lr_d=0.0004/lr_g=0.0001, EMA: enabled, SpectralNorm: enabled"
 echo ""
 
 python training/train.py \

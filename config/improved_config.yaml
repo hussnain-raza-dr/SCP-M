@@ -1,10 +1,13 @@
 # =============================================================================
 # Improved Conditional GAN Configuration
 # =============================================================================
-# Strategy: Conservative SNGAN approach
+# Strategy: SNGAN + TTUR approach
 #   - SAME proven DCGAN architecture as baseline (ConvTranspose2d / strided Conv)
 #   - Add spectral normalization on D (replaces BatchNorm — SNGAN paper)
 #   - Hinge loss (the standard loss for spectral-norm discriminators)
+#   - TTUR: higher D learning rate (0.0004) vs G (0.0001) to prevent D collapse
+#   - 2:1 D:G update ratio for discriminator stability
+#   - beta2=0.9 (standard SNGAN setting, faster adaptation than 0.999)
 #   - Wider channels for higher capacity
 #   - EMA of generator weights for smoother inference
 #   - Larger latent dim and embedding dim
@@ -40,14 +43,15 @@ model:
 
 training:
   batch_size: 64
-  num_epochs: 100
-  lr_g: 0.0002
-  lr_d: 0.0002
+  num_epochs: 200
+  # TTUR (Two Time-Scale Update Rule) — give D a higher LR to keep up with G
+  lr_g: 0.0001
+  lr_d: 0.0004
   beta1: 0.0
-  beta2: 0.999
+  beta2: 0.9        # standard for SNGAN (0.999 was too slow to adapt)
   weight_decay_g: 0.0
   weight_decay_d: 0.0
-  d_steps: 1
+  d_steps: 2        # train D twice per G step to prevent D collapse
   g_steps: 1
   label_smooth_real: 1.0
   label_smooth_fake: 0.0
