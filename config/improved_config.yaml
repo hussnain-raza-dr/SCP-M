@@ -60,6 +60,14 @@ training:
   loss_type: "hinge"
   gp_lambda: 10.0
 
+  # R1 gradient penalty on real images (Mescheder et al., 2018)
+  # Prevents discriminator from losing ability to recognize reals.
+  # Small value is enough — this complements spectral norm, not replaces it.
+  r1_gamma: 1.0
+
+  # Linear LR decay: ramp to 0 over the last 50% of training (SNGAN standard)
+  lr_decay_start: 0.5
+
   # EMA of generator weights for better inference quality
   use_ema: true
   ema_decay: 0.999

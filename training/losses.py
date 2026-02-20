@@ -136,6 +136,52 @@ def gradient_penalty(discriminator, real_images, fake_images, labels, device,
 
 
 # ===================================================================
+# R1 Gradient Penalty (real-only regularization)
+# ===================================================================
+# Reference: Mescheder et al., "Which Training Methods for GANs do
+#            actually Converge?", ICML 2018
+#
+# Why it helps:
+#   - Unlike WGAN-GP (penalizes interpolated samples), R1 only penalizes
+#     gradient norm on REAL images, directly preventing discriminator
+#     collapse on real recognition.
+#   - Compatible with spectral normalization and hinge loss.
+#   - Small coefficient (gamma=0.1-1.0) is enough to stabilize training
+#     without over-constraining the discriminator.
+# ===================================================================
+
+def r1_gradient_penalty(discriminator, real_images, labels, device,
+                        gamma=1.0):
+    """R1 gradient penalty on real images only.
+
+    Penalizes ||grad_D(real)||^2 to keep D well-behaved on the real manifold.
+    This prevents D from losing its ability to recognize real images.
+
+    Args:
+        discriminator: the discriminator model.
+        real_images: (B, C, H, W) real image batch.
+        labels: (B,) class labels for conditional GAN.
+        device: torch device.
+        gamma: penalty coefficient (default 1.0).
+
+    Returns:
+        Scalar R1 penalty loss (already scaled by gamma/2).
+    """
+    real_images = real_images.detach().requires_grad_(True)
+    real_output = discriminator(real_images, labels)
+
+    gradients = autograd.grad(
+        outputs=real_output.sum(),
+        inputs=real_images,
+        create_graph=True,
+    )[0]
+
+    # R1 = (gamma/2) * E[||grad||^2]
+    grad_penalty = (gamma / 2.0) * gradients.pow(2).sum(dim=[1, 2, 3]).mean()
+    return grad_penalty
+
+
+# ===================================================================
 # LSGAN (Least Squares GAN)
 # ===================================================================
 # Reference: Mao et al., "Least Squares GANs", 2017

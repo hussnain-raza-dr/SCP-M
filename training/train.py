@@ -19,6 +19,7 @@ import numpy as np
 import torch
 import yaml
 from torch.optim import Adam
+from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
 # Add project root to path for imports
@@ -30,6 +31,7 @@ from training.losses import (
     get_d_loss_fn,
     get_g_loss_fn,
     gradient_penalty,
+    r1_gradient_penalty,
 )
 from evaluation.visualize import save_image_grid, plot_training_curves
 
@@ -121,6 +123,20 @@ def train(config, resume_path=None):
         weight_decay=train_cfg.get("weight_decay_d", 0.0),
     )
 
+    # Learning rate scheduler: linear decay over the last decay_fraction of training.
+    # Standard in SNGAN/BigGAN — prevents late-training instability.
+    decay_start = train_cfg.get("lr_decay_start", 0.5)  # fraction of training
+    num_epochs = train_cfg["num_epochs"]
+    decay_start_epoch = int(num_epochs * decay_start)
+
+    def lr_lambda(epoch):
+        if epoch < decay_start_epoch:
+            return 1.0
+        return max(0.0, 1.0 - (epoch - decay_start_epoch) / (num_epochs - decay_start_epoch))
+
+    scheduler_g = LambdaLR(optimizer_g, lr_lambda)
+    scheduler_d = LambdaLR(optimizer_d, lr_lambda)
+
     # Fixed noise for consistent visualization across epochs
     num_classes = config["model"]["num_classes"]
     latent_dim = config["model"]["latent_dim"]
@@ -158,6 +174,8 @@ def train(config, resume_path=None):
     g_steps = train_cfg.get("g_steps", 1)
     gp_lambda = train_cfg.get("gp_lambda", 10.0)
     use_gp = (loss_type == "wgan-gp")
+    r1_gamma = train_cfg.get("r1_gamma", 0.0)
+    use_r1 = (r1_gamma > 0)
     grad_clip_g = train_cfg.get("grad_clip_g", 0.0)
     grad_clip_d = train_cfg.get("grad_clip_d", 0.0)
 
@@ -177,9 +195,10 @@ def train(config, resume_path=None):
     print(f"D steps: {d_steps}, G steps: {g_steps}")
     if use_gp:
         print(f"Gradient penalty lambda: {gp_lambda}")
+    if use_r1:
+        print(f"R1 gradient penalty gamma: {r1_gamma}")
 
     # Training loop
-    num_epochs = train_cfg["num_epochs"]
     eval_cfg = config["evaluation"]
 
     for epoch in range(start_epoch, num_epochs):
@@ -233,6 +252,12 @@ def train(config, resume_path=None):
                     device, lambda_gp=gp_lambda,
                 )
                 d_loss = d_loss + gp
+
+            # R1 gradient penalty on real images (prevents D collapse on reals)
+            if use_r1:
+                r1 = r1_gradient_penalty(D, real_images, real_labels, device,
+                                         gamma=r1_gamma)
+                d_loss = d_loss + r1
 
             d_loss.backward()
             if grad_clip_d > 0:
@@ -306,11 +331,18 @@ def train(config, resume_path=None):
         history["d_real_acc"].append(avg_d_real)
         history["d_fake_acc"].append(avg_d_fake)
 
+        current_lr_g = scheduler_g.get_last_lr()[0]
+        current_lr_d = scheduler_d.get_last_lr()[0]
         print(
             f"Epoch [{epoch + 1}/{num_epochs}] "
             f"D_loss: {avg_d:.4f}  G_loss: {avg_g:.4f}  "
-            f"D_acc(real): {avg_d_real:.2f}  D_acc(fake): {avg_d_fake:.2f}"
+            f"D_acc(real): {avg_d_real:.2f}  D_acc(fake): {avg_d_fake:.2f}  "
+            f"lr_g: {current_lr_g:.6f}  lr_d: {current_lr_d:.6f}"
         )
+
+        # Step learning rate schedulers
+        scheduler_g.step()
+        scheduler_d.step()
 
         # Generate sample grid (use EMA generator if available)
         if (epoch + 1) % eval_cfg["sample_every"] == 0:

@@ -119,10 +119,13 @@ class ConditionalGAN:
         else:
             self.generator.apply(weights_init)
 
-        # Only apply weight init to D if not using spectral norm
-        # (spectral norm manages its own weight scaling)
+        # Use orthogonal init for spectral-normed D (skips SN layers properly).
+        # weights_init_improved checks hasattr(m, "weight_orig") to skip
+        # spectral-normed modules, while weights_init does not.
         d_norm = model_cfg.get("d_normalization", "batchnorm")
-        if d_type == "improved" and d_norm == "spectralnorm":
+        if d_norm == "spectralnorm":
+            self.discriminator.apply(weights_init_improved)
+        elif d_type == "improved":
             self.discriminator.apply(weights_init_improved)
         else:
             self.discriminator.apply(weights_init)
