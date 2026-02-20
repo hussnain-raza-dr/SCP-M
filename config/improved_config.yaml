@@ -1,19 +1,21 @@
 # =============================================================================
 # Improved Conditional GAN Configuration
 # =============================================================================
-# Strategy: SNGAN + TTUR approach
-#   - SAME proven DCGAN architecture as baseline (ConvTranspose2d / strided Conv)
-#   - Add spectral normalization on D (replaces BatchNorm — SNGAN paper)
-#   - Hinge loss (the standard loss for spectral-norm discriminators)
-#   - TTUR: higher D learning rate (0.0004) vs G (0.0001) to prevent D collapse
-#   - 2:1 D:G update ratio for discriminator stability
-#   - beta2=0.9 (standard SNGAN setting, faster adaptation than 0.999)
-#   - Wider channels for higher capacity
-#   - EMA of generator weights for smoother inference
-#   - Larger latent dim and embedding dim
+# Strategy: SNGAN with residual architectures (Miyato et al., 2018)
 #
-# This is the approach from Miyato et al. "Spectral Normalization for GANs"
-# which is proven to work reliably on CIFAR-10 at 32x32.
+#   - Residual generator and discriminator (better gradient flow under SN)
+#   - Spectral normalization on all D layers (Lipschitz constraint)
+#   - Minibatch stddev in D (detects mode collapse)
+#   - Hinge loss (proven with spectral norm)
+#   - TTUR: lr_D=0.0004, lr_G=0.0001
+#   - 1:1 D:G ratio (SNGAN ResNet uses 1:1 per the paper)
+#   - Linear LR decay in second half of training
+#   - EMA of generator weights
+#   - Orthogonal weight init (BigGAN/SNGAN standard)
+#
+# The SNGAN paper showed that the ResNet architecture is critical —
+# vanilla DCGAN (3 plain conv layers) has insufficient gradient flow
+# under spectral norm constraint, causing discriminator collapse.
 #
 # NOTE: Do NOT combine spectral norm with WGAN-GP gradient penalty —
 # double-constraining the Lipschitz constant causes the critic to collapse.
@@ -26,19 +28,19 @@ model:
   image_channels: 3
   image_size: 32
 
-  # Wider channels than baseline [256,128,64] / [64,128,256]
+  # Wider channels for higher capacity
   generator_channels: [512, 256, 128]
   discriminator_channels: [128, 256, 512]
   leaky_relu_slope: 0.2
   init_std: 0.02
 
-  # Use the standard DCGAN architecture (NOT residual blocks)
-  generator_type: "baseline"
-  discriminator_type: "baseline"
+  # Residual architectures — essential for spectral norm to work
+  # (vanilla DCGAN collapses under SN due to poor gradient flow)
+  generator_type: "improved"
+  discriminator_type: "improved"
 
-  # Key improvement: spectral norm on D instead of batch norm
-  # This enforces the Lipschitz constraint needed for hinge loss
-  # without the instability of batch norm in the discriminator
+  # Spectral norm on D (no BatchNorm — they're incompatible)
+  # Minibatch stddev enabled by default in ImprovedDiscriminator
   d_normalization: "spectralnorm"
 
 training:
@@ -48,10 +50,12 @@ training:
   lr_g: 0.0001
   lr_d: 0.0004
   beta1: 0.0
-  beta2: 0.9        # standard for SNGAN (0.999 was too slow to adapt)
+  beta2: 0.9
   weight_decay_g: 0.0
   weight_decay_d: 0.0
-  d_steps: 2        # train D twice per G step to prevent D collapse
+  # 1:1 ratio — SNGAN ResNet arch uses 1:1 (Table 1 in the paper)
+  # The residual connections + spectral norm keep D stable without extra steps
+  d_steps: 1
   g_steps: 1
   label_smooth_real: 1.0
   label_smooth_fake: 0.0
@@ -60,10 +64,9 @@ training:
   loss_type: "hinge"
   gp_lambda: 10.0
 
-  # R1 gradient penalty on real images (Mescheder et al., 2018)
-  # Prevents discriminator from losing ability to recognize reals.
-  # Small value is enough — this complements spectral norm, not replaces it.
-  r1_gamma: 1.0
+  # R1 disabled — spectral norm + residual + minibatch stddev is sufficient.
+  # R1 over-regularizes D when combined with spectral norm.
+  r1_gamma: 0.0
 
   # Linear LR decay: ramp to 0 over the last 50% of training (SNGAN standard)
   lr_decay_start: 0.5
