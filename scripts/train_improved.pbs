@@ -44,7 +44,7 @@ mkdir -p "${PROJECT_DIR}/logs"
 # module load cuda/12.1
 # module load cudnn/8.9
 
-source "${PROJECT_DIR}/venv/bin/activate"
+source "${PROJECT_DIR}/venv311/bin/activate"
 
 # Verify GPU
 echo ""
