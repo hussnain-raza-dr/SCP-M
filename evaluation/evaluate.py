@@ -39,6 +39,7 @@ def evaluate_discriminator(discriminator, generator, dataloader, config,
 
     latent_dim = config["model"]["latent_dim"]
     num_classes = config["model"]["num_classes"]
+    loss_type = config["training"].get("loss_type", "vanilla")
 
     # Per-class counters
     real_correct = np.zeros(num_classes)
@@ -46,7 +47,7 @@ def evaluate_discriminator(discriminator, generator, dataloader, config,
     fake_correct = np.zeros(num_classes)
     fake_total = np.zeros(num_classes)
 
-    # Confidence scores for histograms
+    # Raw scores for histograms
     real_confidences = []
     fake_confidences = []
 
@@ -58,10 +59,18 @@ def evaluate_discriminator(discriminator, generator, dataloader, config,
 
             # Real images
             real_out = discriminator(images, labels)
-            real_probs = torch.sigmoid(real_out).squeeze()
-            real_confidences.append(real_probs.cpu().numpy())
+            real_scores = real_out.squeeze()
 
-            real_preds = (real_probs > 0.5).float()
+            if loss_type in ("hinge", "wgan-gp"):
+                # Critic score: correct when D(real) > 0
+                real_confidences.append(real_scores.cpu().numpy())
+                real_preds = (real_scores > 0).float()
+            else:
+                # Sigmoid-based: correct when sigmoid(D(real)) > 0.5
+                real_probs = torch.sigmoid(real_scores)
+                real_confidences.append(real_probs.cpu().numpy())
+                real_preds = (real_probs > 0.5).float()
+
             for c in range(num_classes):
                 mask = (labels == c)
                 if mask.sum() > 0:
@@ -74,10 +83,17 @@ def evaluate_discriminator(discriminator, generator, dataloader, config,
                                         device=device)
             fake_images = generator(z, fake_labels)
             fake_out = discriminator(fake_images, fake_labels)
-            fake_probs = torch.sigmoid(fake_out).squeeze()
-            fake_confidences.append(fake_probs.cpu().numpy())
+            fake_scores = fake_out.squeeze()
 
-            fake_preds = (fake_probs < 0.5).float()
+            if loss_type in ("hinge", "wgan-gp"):
+                # Critic score: correct when D(fake) < 0
+                fake_confidences.append(fake_scores.cpu().numpy())
+                fake_preds = (fake_scores < 0).float()
+            else:
+                fake_probs = torch.sigmoid(fake_scores)
+                fake_confidences.append(fake_probs.cpu().numpy())
+                fake_preds = (fake_probs < 0.5).float()
+
             for c in range(num_classes):
                 mask = (fake_labels == c)
                 if mask.sum() > 0:
@@ -109,13 +125,15 @@ def compute_generation_quality(generator, discriminator, config, device,
                                num_samples_per_class=500):
     """Compute per-class mean D score for generated images.
 
-    Lower D score (closer to 0) means G is better at fooling D for that class.
+    For hinge/wgan-gp: raw critic score (higher = G fools D better).
+    For vanilla/lsgan: sigmoid probability (closer to 1 = G fools D better).
     """
     generator.eval()
     discriminator.eval()
 
     latent_dim = config["model"]["latent_dim"]
     num_classes = config["model"]["num_classes"]
+    loss_type = config["training"].get("loss_type", "vanilla")
 
     mean_scores = []
     with torch.no_grad():
@@ -124,8 +142,11 @@ def compute_generation_quality(generator, discriminator, config, device,
             labels = torch.full((num_samples_per_class,), c, dtype=torch.long,
                                 device=device)
             fake_images = generator(z, labels)
-            scores = torch.sigmoid(discriminator(fake_images, labels)).squeeze()
-            mean_scores.append(scores.mean().item())
+            raw_scores = discriminator(fake_images, labels).squeeze()
+            if loss_type in ("hinge", "wgan-gp"):
+                mean_scores.append(raw_scores.mean().item())
+            else:
+                mean_scores.append(torch.sigmoid(raw_scores).mean().item())
 
     return mean_scores
 
@@ -348,7 +369,7 @@ def plot_confidence_histogram(real_confidences, fake_confidences, save_dir):
     ax.hist(fake_confidences, bins=50, alpha=0.6, label="Fake", color="red",
             density=True)
 
-    ax.set_xlabel("D(x) confidence (sigmoid output)")
+    ax.set_xlabel("D(x) score")
     ax.set_ylabel("Density")
     ax.set_title("Discriminator Confidence Distribution")
     ax.legend()
@@ -368,9 +389,8 @@ def plot_per_class_generation_quality(mean_scores, class_names, save_dir):
     ax.set_xticks(x)
     ax.set_xticklabels(class_names, rotation=45, ha="right")
     ax.set_ylabel("Mean D(G(z)) score")
-    ax.set_title("Per-class Generation Quality (lower = G fools D better)")
-    ax.set_ylim(0, 1)
-    ax.axhline(y=0.5, color="gray", linestyle="--", alpha=0.5)
+    ax.set_title("Per-class Generation Quality")
+    ax.axhline(y=0.0, color="gray", linestyle="--", alpha=0.5)
     ax.grid(True, alpha=0.3, axis="y")
 
     for bar, score in zip(bars, mean_scores):

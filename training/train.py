@@ -160,7 +160,7 @@ def train(config, resume_path=None):
     start_epoch = 0
     if resume_path is not None:
         start_epoch, saved_history = cgan.load_checkpoint(
-            resume_path, optimizer_g, optimizer_d
+            resume_path, optimizer_g, optimizer_d, G_ema=G_ema
         )
         if saved_history:
             history = saved_history

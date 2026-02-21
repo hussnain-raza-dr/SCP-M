@@ -169,11 +169,21 @@ class ConditionalGAN:
             state["generator_ema_state_dict"] = G_ema.state_dict()
         torch.save(state, path)
 
-    def load_checkpoint(self, path, optimizer_g=None, optimizer_d=None):
+    def load_checkpoint(self, path, optimizer_g=None, optimizer_d=None,
+                        G_ema=None):
         """Load training state from disk.
 
+        Args:
+            path: checkpoint file path.
+            optimizer_g: generator optimizer (optional, for resuming training).
+            optimizer_d: discriminator optimizer (optional, for resuming training).
+            G_ema: EMA generator model (optional). If provided and checkpoint
+                   contains EMA state, loads it. If None but checkpoint has EMA
+                   state, the EMA weights are loaded into self.generator instead
+                   (useful for evaluation with the better EMA model).
+
         Returns:
-            epoch number to resume from.
+            (epoch, history) tuple.
         """
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.generator.load_state_dict(checkpoint["generator_state_dict"])
@@ -182,4 +192,15 @@ class ConditionalGAN:
             optimizer_g.load_state_dict(checkpoint["optimizer_g_state_dict"])
         if optimizer_d is not None:
             optimizer_d.load_state_dict(checkpoint["optimizer_d_state_dict"])
+
+        # Load EMA generator if available in checkpoint
+        ema_key = "generator_ema_state_dict"
+        if ema_key in checkpoint:
+            if G_ema is not None:
+                # Training resume: load into the EMA model
+                G_ema.load_state_dict(checkpoint[ema_key])
+            elif optimizer_g is None:
+                # Evaluation mode (no optimizers): prefer EMA weights for G
+                self.generator.load_state_dict(checkpoint[ema_key])
+
         return checkpoint["epoch"], checkpoint.get("history", {})

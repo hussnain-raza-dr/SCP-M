@@ -64,12 +64,16 @@ training:
   loss_type: "hinge"
   gp_lambda: 10.0
 
-  # R1 disabled — spectral norm + residual + minibatch stddev is sufficient.
-  # R1 over-regularizes D when combined with spectral norm.
-  r1_gamma: 0.0
+  # R1 gradient penalty on real images — prevents D from losing ability to
+  # recognize reals during LR decay phase (Mescheder et al., ICML 2018).
+  # Small gamma (0.1) is safe with spectral norm — only large values (>10)
+  # cause over-regularization.
+  r1_gamma: 0.1
 
-  # Linear LR decay: ramp to 0 over the last 50% of training (SNGAN standard)
-  lr_decay_start: 0.5
+  # Linear LR decay: ramp to 0 over the last 40% of training.
+  # Starting at 60% gives more time at full LR for learning while R1
+  # penalty keeps D stable during the decay phase.
+  lr_decay_start: 0.6
 
   # EMA of generator weights for better inference quality
   use_ema: true

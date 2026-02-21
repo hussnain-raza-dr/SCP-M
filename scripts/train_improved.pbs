@@ -8,7 +8,6 @@
 #
 # This job takes longer than baseline due to:
 #   - 200 epochs (vs 50)
-#   - 2:1 D:G ratio (2x more D updates per batch)
 #   - Larger model with wider channels
 # =============================================================================
 
@@ -58,7 +57,7 @@ echo ""
 echo "--- Starting Improved Training ---"
 echo "Config: config/improved_config.yaml"
 echo "Epochs: 200, Batch size: 64, Loss: Hinge"
-echo "D steps: 2, TTUR: lr_d=0.0004/lr_g=0.0001, EMA: enabled, SpectralNorm: enabled"
+echo "D steps: 1, TTUR: lr_d=0.0004/lr_g=0.0001, EMA: enabled, SpectralNorm: enabled, R1: 0.1"
 echo ""
 
 python training/train.py \
