@@ -65,8 +65,8 @@ echo " Project: ${PROJECT_DIR}"
 echo "============================================="
 
 # Check that virtual environment exists
-if [ ! -d "${PROJECT_DIR}/venv" ]; then
-    echo "ERROR: Virtual environment not found at ${PROJECT_DIR}/venv"
+if [ ! -d "${PROJECT_DIR}/venv311" ]; then
+    echo "ERROR: Virtual environment not found at ${PROJECT_DIR}/venv311"
     echo "Run 'bash scripts/setup_env.sh' first."
     exit 1
 fi
