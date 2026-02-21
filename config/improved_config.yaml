@@ -7,9 +7,10 @@
 #   - Spectral normalization on all D layers (Lipschitz constraint)
 #   - Minibatch stddev in D (detects mode collapse)
 #   - Hinge loss (proven with spectral norm)
-#   - TTUR: lr_D=0.0004, lr_G=0.0001
+#   - Equal LRs: lr_D=lr_G=0.0002 (matching SNGAN paper Table 3)
 #   - 1:1 D:G ratio (SNGAN ResNet uses 1:1 per the paper)
-#   - Linear LR decay in second half of training
+#   - Linear LR decay in last 20% of training
+#   - R1 gradient penalty (gamma=1.0) for late-training stability
 #   - EMA of generator weights
 #   - Orthogonal weight init (BigGAN/SNGAN standard)
 #
@@ -45,10 +46,15 @@ model:
 
 training:
   batch_size: 64
-  num_epochs: 200
-  # TTUR (Two Time-Scale Update Rule) — give D a higher LR to keep up with G
-  lr_g: 0.0001
-  lr_d: 0.0004
+  num_epochs: 400
+  # Equal LRs — matching SNGAN paper (Miyato et al., 2018, Table 3).
+  # Previous TTUR (lr_D=0.0004, lr_G=0.0001) caused D to over-optimize:
+  #   - D_acc(real) stuck at 0.5 while D_acc(fake) shot to 1.0 after epoch 175
+  #   - G loss flatlined at 0.22 — getting gradients but unable to catch up
+  # With hinge loss + SN, D is already well-regularized and doesn't need
+  # a higher LR. Equal LRs let G keep pace with D.
+  lr_g: 0.0002
+  lr_d: 0.0002
   beta1: 0.0
   beta2: 0.9
   weight_decay_g: 0.0
@@ -64,16 +70,17 @@ training:
   loss_type: "hinge"
   gp_lambda: 10.0
 
-  # R1 gradient penalty on real images — prevents D from losing ability to
-  # recognize reals during LR decay phase (Mescheder et al., ICML 2018).
-  # Small gamma (0.1) is safe with spectral norm — only large values (>10)
-  # cause over-regularization.
-  r1_gamma: 0.1
+  # R1 gradient penalty on real images — prevents D from diverging during
+  # LR decay phase (Mescheder et al., ICML 2018). Previous gamma=0.1 was
+  # negligible; the late-stage D_acc(fake) spike to 1.0 showed D pulling
+  # away unchecked. gamma=1.0 provides meaningful regularization without
+  # over-constraining D (values >10 cause over-regularization with SN).
+  r1_gamma: 1.0
 
-  # Linear LR decay: ramp to 0 over the last 40% of training.
-  # Starting at 60% gives more time at full LR for learning while R1
-  # penalty keeps D stable during the decay phase.
-  lr_decay_start: 0.6
+  # Linear LR decay: ramp to 0 over the last 20% of training.
+  # Previous lr_decay_start=0.6 cut G's LR before convergence, triggering
+  # the epoch-175 collapse. Starting at 80% gives G the full LR for longer.
+  lr_decay_start: 0.8
 
   # EMA of generator weights for better inference quality
   use_ema: true
