@@ -10,7 +10,7 @@
 #   - Equal LRs: lr_D=lr_G=0.0002 (matching SNGAN paper Table 3)
 #   - 1:1 D:G ratio (SNGAN ResNet uses 1:1 per the paper)
 #   - Linear LR decay in last 20% of training
-#   - R1 gradient penalty (gamma=1.0) for late-training stability
+#   - No R1 penalty (SN alone is sufficient; R1+SN causes D collapse)
 #   - EMA of generator weights
 #   - Orthogonal weight init (BigGAN/SNGAN standard)
 #
@@ -70,12 +70,13 @@ training:
   loss_type: "hinge"
   gp_lambda: 10.0
 
-  # R1 gradient penalty on real images — prevents D from diverging during
-  # LR decay phase (Mescheder et al., ICML 2018). Previous gamma=0.1 was
-  # negligible; the late-stage D_acc(fake) spike to 1.0 showed D pulling
-  # away unchecked. gamma=1.0 provides meaningful regularization without
-  # over-constraining D (values >10 cause over-regularization with SN).
-  r1_gamma: 1.0
+  # R1 gradient penalty DISABLED — spectral norm already bounds ||∇D|| ≤ 1.
+  # Adding R1 on top of SN double-regularizes D, causing it to collapse:
+  #   - gamma=0.1 (run 1): negligible effect, didn't prevent late-stage divergence
+  #   - gamma=1.0 (run 2): D collapsed to constant output (D_loss=2.0, random acc)
+  # The SNGAN paper uses SN alone with no R1. R1 is designed as an
+  # alternative to SN (e.g., StyleGAN2 uses R1 without SN), not a complement.
+  r1_gamma: 0.0
 
   # Linear LR decay: ramp to 0 over the last 20% of training.
   # Previous lr_decay_start=0.6 cut G's LR before convergence, triggering
