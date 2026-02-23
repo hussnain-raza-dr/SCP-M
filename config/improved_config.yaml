@@ -9,7 +9,7 @@
 #   - Hinge loss (proven with spectral norm)
 #   - Equal LRs: lr_D=lr_G=0.0002 (matching SNGAN paper Table 3)
 #   - 1:1 D:G ratio (SNGAN ResNet uses 1:1 per the paper)
-#   - Linear LR decay in last 20% of training
+#   - Constant LR (no decay — decay triggers late-stage collapse with SN)
 #   - No R1 penalty (SN alone is sufficient; R1+SN causes D collapse)
 #   - EMA of generator weights
 #   - Orthogonal weight init (BigGAN/SNGAN standard)
@@ -78,10 +78,14 @@ training:
   # alternative to SN (e.g., StyleGAN2 uses R1 without SN), not a complement.
   r1_gamma: 0.0
 
-  # Linear LR decay: ramp to 0 over the last 20% of training.
-  # Previous lr_decay_start=0.6 cut G's LR before convergence, triggering
-  # the epoch-175 collapse. Starting at 80% gives G the full LR for longer.
-  lr_decay_start: 0.8
+  # LR decay DISABLED — constant LR throughout training.
+  # LR decay consistently triggers late-stage D-G imbalance:
+  #   - Run 1 (decay at 60%): D_acc(fake) spiked to 1.0 at epoch 175
+  #   - Run 3 (decay at 80%): D_acc(fake) spiked to 0.95 at epoch 350
+  # With SN constraining D, the training equilibrium is stable at constant
+  # LR — run 3 showed good learning for 320 epochs before decay broke it.
+  # Set >= 1.0 to disable (train.py handles this without division by zero).
+  lr_decay_start: 1.0
 
   # EMA of generator weights for better inference quality
   use_ema: true

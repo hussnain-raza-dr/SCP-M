@@ -57,7 +57,7 @@ echo ""
 echo "--- Starting Improved Training ---"
 echo "Config: config/improved_config.yaml"
 echo "Epochs: 400, Batch size: 64, Loss: Hinge"
-echo "D steps: 1, lr_d=lr_g=0.0002, EMA: enabled, SpectralNorm: enabled, R1: 1.0"
+echo "D steps: 1, lr_d=lr_g=0.0002, EMA: enabled, SpectralNorm: enabled, no R1, no LR decay"
 echo ""
 
 python training/train.py \

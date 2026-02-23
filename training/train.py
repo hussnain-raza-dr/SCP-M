@@ -124,13 +124,13 @@ def train(config, resume_path=None):
     )
 
     # Learning rate scheduler: linear decay over the last decay_fraction of training.
-    # Standard in SNGAN/BigGAN — prevents late-training instability.
+    # Set lr_decay_start >= 1.0 to disable decay (constant LR throughout).
     decay_start = train_cfg.get("lr_decay_start", 0.5)  # fraction of training
     num_epochs = train_cfg["num_epochs"]
     decay_start_epoch = int(num_epochs * decay_start)
 
     def lr_lambda(epoch):
-        if epoch < decay_start_epoch:
+        if decay_start_epoch >= num_epochs or epoch < decay_start_epoch:
             return 1.0
         return max(0.0, 1.0 - (epoch - decay_start_epoch) / (num_epochs - decay_start_epoch))
 
