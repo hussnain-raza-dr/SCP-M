@@ -12,6 +12,8 @@
 #   - Constant LR (no decay — decay triggers late-stage collapse with SN)
 #   - No R1 penalty (SN alone is sufficient; R1+SN causes D collapse)
 #   - EMA of generator weights
+#   - Zero residual init (prevents Tanh saturation from magnitude growth)
+#   - Weight decay on G (1e-4, prevents weight growth over long training)
 #   - Orthogonal weight init (BigGAN/SNGAN standard)
 #
 # The SNGAN paper showed that the ResNet architecture is critical —
@@ -57,7 +59,11 @@ training:
   lr_d: 0.0002
   beta1: 0.0
   beta2: 0.9
-  weight_decay_g: 0.0
+  # Weight decay on G prevents weight growth that drives Tanh saturation.
+  # Run 4 showed all outputs saturating to ±1 by epoch 100 (8 pure colors only).
+  # With decay, weights are pulled toward zero, keeping pre-Tanh activations
+  # bounded. Combined with zero residual init, this prevents saturation.
+  weight_decay_g: 0.0001
   weight_decay_d: 0.0
   # 1:1 ratio — SNGAN ResNet arch uses 1:1 (Table 1 in the paper)
   # The residual connections + spectral norm keep D stable without extra steps
