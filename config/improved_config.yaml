@@ -12,7 +12,7 @@
 #   - Constant LR (no decay — decay triggers late-stage collapse with SN)
 #   - No R1 penalty (SN alone is sufficient; R1+SN causes D collapse)
 #   - EMA of generator weights
-#   - Zero residual init (prevents Tanh saturation from magnitude growth)
+#   - Small residual init (gain=0.1 on last conv, prevents Tanh saturation)
 #   - Weight decay on G (1e-4, prevents weight growth over long training)
 #   - Orthogonal weight init (BigGAN/SNGAN standard)
 #

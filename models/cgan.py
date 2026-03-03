@@ -116,14 +116,16 @@ class ConditionalGAN:
         # Apply weight initialization
         if g_type == "improved":
             self.generator.apply(weights_init_improved)
-            # Zero-init the last conv in each residual block ("zero residual init").
-            # Without this, both main and skip paths have similar magnitude from
-            # orthogonal init, so each block ~doubles the signal. Over 2 blocks,
+            # Scale down the last conv in each residual block (gain=0.1).
+            # With full orthogonal init (gain=1.0), main and skip paths have
+            # similar magnitude, so each block ~doubles the signal. Over 2 blocks,
             # pre-Tanh activations grow ~4x, causing Tanh to saturate to ±1.
-            # Zero-init makes each block start as identity (skip-only), preventing
-            # magnitude explosion. Standard practice in BigGAN/StyleGAN.
+            #
+            # gain=0.1 makes residual branch contribute ~10% of skip — blocks
+            # amplify by ~1.1x instead of ~2x. Still diverse enough for D to
+            # learn from (unlike zero-init which collapsed to gray).
             for block in self.generator.blocks:
-                nn.init.zeros_(block.main[-1].weight)
+                nn.init.orthogonal_(block.main[-1].weight, gain=0.1)
         else:
             self.generator.apply(weights_init)
 
