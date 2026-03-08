@@ -36,6 +36,15 @@ echo "============================================="
 # Create log directory
 mkdir -p "${PROJECT_DIR}/logs"
 
+# --- Sync latest code from Git ---
+echo ""
+echo "--- Git Sync ---"
+cd "${PROJECT_DIR}"
+git fetch origin
+git pull origin "$(git rev-parse --abbrev-ref HEAD)"
+echo "Current commit: $(git log --oneline -1)"
+echo ""
+
 # Load cluster modules (adjust to your cluster)
 # module purge
 # module load python/3.10
