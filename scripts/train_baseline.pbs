@@ -52,7 +52,7 @@ echo ""
 # module load cudnn/8.9
 
 # Activate virtual environment
-source "${PROJECT_DIR}/venv/bin/activate"
+source "${PROJECT_DIR}/venv311/bin/activate"
 
 # Verify GPU availability
 echo ""
