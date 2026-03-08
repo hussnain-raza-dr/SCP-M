@@ -6,6 +6,7 @@ Supports both baseline (vanilla GAN) and improved configurations:
   - Gradient penalty (WGAN-GP)
   - Exponential moving average (EMA) of generator weights
   - Gradient clipping
+  - Multi-GPU distributed training via MPI + PyTorch DDP
 """
 
 import argparse
@@ -17,6 +18,8 @@ import sys
 
 import numpy as np
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 import yaml
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
@@ -34,6 +37,57 @@ from training.losses import (
     r1_gradient_penalty,
 )
 from evaluation.visualize import save_image_grid, plot_training_curves
+
+
+# ---------------------------------------------------------------------------
+# Distributed helpers
+# ---------------------------------------------------------------------------
+
+def setup_distributed():
+    """Initialize distributed process group using environment variables.
+
+    Works with both torchrun and mpirun launchers. Returns (rank, world_size)
+    or (0, 1) when running without distributed.
+    """
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        # Launched via torchrun / torch.distributed.launch
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    elif "OMPI_COMM_WORLD_RANK" in os.environ:
+        # Launched via mpirun (OpenMPI)
+        rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
+        world_size = int(os.environ["OMPI_COMM_WORLD_SIZE"])
+        local_rank = int(os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", 0))
+        os.environ["RANK"] = str(rank)
+        os.environ["WORLD_SIZE"] = str(world_size)
+        os.environ["LOCAL_RANK"] = str(local_rank)
+        if "MASTER_ADDR" not in os.environ:
+            os.environ["MASTER_ADDR"] = "localhost"
+        if "MASTER_PORT" not in os.environ:
+            os.environ["MASTER_PORT"] = "29500"
+    else:
+        # Single-process, non-distributed
+        return 0, 1
+
+    backend = "nccl" if torch.cuda.is_available() else "gloo"
+    dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+    return rank, world_size
+
+
+def cleanup_distributed():
+    """Destroy the distributed process group if active."""
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def is_main_process():
+    """Return True if this is rank 0 (or non-distributed)."""
+    if not dist.is_initialized():
+        return True
+    return dist.get_rank() == 0
 
 
 def set_seed(seed=42):
@@ -80,33 +134,59 @@ def train(config, resume_path=None):
         config: dict loaded from YAML config.
         resume_path: optional path to checkpoint to resume from.
     """
+    # Distributed setup
+    rank, world_size = setup_distributed()
+    distributed = world_size > 1
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+
     # Setup
     seed = config.get("seed", 42)
-    set_seed(seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    set_seed(seed + rank)  # different seed per rank for data diversity
+    if torch.cuda.is_available():
+        device = torch.device("cuda", local_rank)
+    else:
+        device = torch.device("cpu")
+    if is_main_process():
+        print(f"Using device: {device}")
+        if distributed:
+            print(f"Distributed training: {world_size} processes")
 
     # Paths
     checkpoint_dir = config["paths"]["checkpoint_dir"]
     results_dir = config["paths"]["results_dir"]
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    os.makedirs(results_dir, exist_ok=True)
+    if is_main_process():
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        os.makedirs(results_dir, exist_ok=True)
+    if distributed:
+        dist.barrier()
 
-    # Data
-    train_loader, test_loader = get_dataloaders(config)
-    print(f"Training batches: {len(train_loader)}, "
-          f"Test batches: {len(test_loader)}")
+    # Data (pass distributed info for DistributedSampler)
+    train_loader, test_loader = get_dataloaders(
+        config, distributed=distributed, rank=rank, world_size=world_size,
+    )
+    if is_main_process():
+        print(f"Training batches: {len(train_loader)}, "
+              f"Test batches: {len(test_loader)}")
 
     # Model
     cgan = ConditionalGAN(config, device)
     G = cgan.generator
     D = cgan.discriminator
 
+    # Wrap models in DDP
+    if distributed:
+        G = DDP(G, device_ids=[local_rank] if torch.cuda.is_available() else None)
+        D = DDP(D, device_ids=[local_rank] if torch.cuda.is_available() else None)
+    # Keep references to the underlying module for checkpointing / EMA
+    G_module = G.module if distributed else G
+    D_module = D.module if distributed else D
+
     # Print model summaries
     g_params = sum(p.numel() for p in G.parameters())
     d_params = sum(p.numel() for p in D.parameters())
-    print(f"Generator parameters: {g_params:,}")
-    print(f"Discriminator parameters: {d_params:,}")
+    if is_main_process():
+        print(f"Generator parameters: {g_params:,}")
+        print(f"Discriminator parameters: {d_params:,}")
 
     # Optimizers
     train_cfg = config["training"]
@@ -183,25 +263,31 @@ def train(config, resume_path=None):
     label_smooth_real = train_cfg.get("label_smooth_real", 1.0)
     label_smooth_fake = train_cfg.get("label_smooth_fake", 0.0)
 
-    # EMA
+    # EMA (on the unwrapped module)
     use_ema = train_cfg.get("use_ema", False)
     ema_decay = train_cfg.get("ema_decay", 0.999)
     G_ema = None
     if use_ema:
-        G_ema = create_ema(G)
-        print(f"EMA enabled (decay={ema_decay})")
+        G_ema = create_ema(G_module)
+        if is_main_process():
+            print(f"EMA enabled (decay={ema_decay})")
 
-    print(f"Loss type: {loss_type}")
-    print(f"D steps: {d_steps}, G steps: {g_steps}")
-    if use_gp:
-        print(f"Gradient penalty lambda: {gp_lambda}")
-    if use_r1:
-        print(f"R1 gradient penalty gamma: {r1_gamma}")
+    if is_main_process():
+        print(f"Loss type: {loss_type}")
+        print(f"D steps: {d_steps}, G steps: {g_steps}")
+        if use_gp:
+            print(f"Gradient penalty lambda: {gp_lambda}")
+        if use_r1:
+            print(f"R1 gradient penalty gamma: {r1_gamma}")
 
     # Training loop
     eval_cfg = config["evaluation"]
 
     for epoch in range(start_epoch, num_epochs):
+        # Set epoch on distributed sampler for proper shuffling
+        if distributed and hasattr(train_loader.sampler, "set_epoch"):
+            train_loader.sampler.set_epoch(epoch)
+
         G.train()
         D.train()
 
@@ -212,7 +298,8 @@ def train(config, resume_path=None):
         num_batches = 0
         g_updates = 0
 
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs}")
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs}",
+                    disable=not is_main_process())
         for real_images, real_labels in pbar:
             batch_size = real_images.size(0)
             real_images = real_images.to(device)
@@ -304,9 +391,9 @@ def train(config, resume_path=None):
                         torch.nn.utils.clip_grad_norm_(G.parameters(), grad_clip_g)
                     optimizer_g.step()
 
-                    # Update EMA
+                    # Update EMA (on unwrapped module)
                     if use_ema:
-                        update_ema(G_ema, G, ema_decay)
+                        update_ema(G_ema, G_module, ema_decay)
 
                 epoch_g_loss += g_loss.item()
                 g_updates += 1
@@ -333,49 +420,58 @@ def train(config, resume_path=None):
 
         current_lr_g = scheduler_g.get_last_lr()[0]
         current_lr_d = scheduler_d.get_last_lr()[0]
-        print(
-            f"Epoch [{epoch + 1}/{num_epochs}] "
-            f"D_loss: {avg_d:.4f}  G_loss: {avg_g:.4f}  "
-            f"D_acc(real): {avg_d_real:.2f}  D_acc(fake): {avg_d_fake:.2f}  "
-            f"lr_g: {current_lr_g:.6f}  lr_d: {current_lr_d:.6f}"
-        )
+        if is_main_process():
+            print(
+                f"Epoch [{epoch + 1}/{num_epochs}] "
+                f"D_loss: {avg_d:.4f}  G_loss: {avg_g:.4f}  "
+                f"D_acc(real): {avg_d_real:.2f}  D_acc(fake): {avg_d_fake:.2f}  "
+                f"lr_g: {current_lr_g:.6f}  lr_d: {current_lr_d:.6f}"
+            )
 
         # Step learning rate schedulers
         scheduler_g.step()
         scheduler_d.step()
 
-        # Generate sample grid (use EMA generator if available)
-        if (epoch + 1) % eval_cfg["sample_every"] == 0:
-            gen_for_viz = G_ema if use_ema else G
-            gen_for_viz.eval()
-            with torch.no_grad():
-                samples = gen_for_viz(fixed_noise, fixed_labels)
-            save_image_grid(samples, fixed_labels, epoch + 1, results_dir,
-                            nrow=num_per_class)
+        # Only rank 0 does visualization and checkpointing
+        if is_main_process():
+            # Generate sample grid (use EMA generator if available)
+            if (epoch + 1) % eval_cfg["sample_every"] == 0:
+                gen_for_viz = G_ema if use_ema else G_module
+                gen_for_viz.eval()
+                with torch.no_grad():
+                    samples = gen_for_viz(fixed_noise, fixed_labels)
+                save_image_grid(samples, fixed_labels, epoch + 1, results_dir,
+                                nrow=num_per_class)
 
-        # Save checkpoint
-        if (epoch + 1) % eval_cfg["save_every"] == 0:
-            ckpt_path = os.path.join(
-                checkpoint_dir, f"checkpoint_epoch_{epoch + 1}.pt"
-            )
-            cgan.save_checkpoint(ckpt_path, epoch + 1, optimizer_g,
-                                 optimizer_d, history, G_ema=G_ema)
-            print(f"  Checkpoint saved: {ckpt_path}")
+            # Save checkpoint (using unwrapped modules via cgan)
+            if (epoch + 1) % eval_cfg["save_every"] == 0:
+                ckpt_path = os.path.join(
+                    checkpoint_dir, f"checkpoint_epoch_{epoch + 1}.pt"
+                )
+                cgan.save_checkpoint(ckpt_path, epoch + 1, optimizer_g,
+                                     optimizer_d, history, G_ema=G_ema)
+                print(f"  Checkpoint saved: {ckpt_path}")
 
-    # Final checkpoint
-    final_path = os.path.join(checkpoint_dir, "checkpoint_final.pt")
-    cgan.save_checkpoint(final_path, num_epochs, optimizer_g, optimizer_d,
-                         history, G_ema=G_ema)
-    print(f"Final checkpoint saved: {final_path}")
+        if distributed:
+            dist.barrier()
 
-    # Save training curves
-    plot_training_curves(history, results_dir)
+    # Final checkpoint and outputs (rank 0 only)
+    if is_main_process():
+        final_path = os.path.join(checkpoint_dir, "checkpoint_final.pt")
+        cgan.save_checkpoint(final_path, num_epochs, optimizer_g, optimizer_d,
+                             history, G_ema=G_ema)
+        print(f"Final checkpoint saved: {final_path}")
 
-    # Save history as JSON
-    history_path = os.path.join(results_dir, "training_history.json")
-    with open(history_path, "w") as f:
-        json.dump(history, f, indent=2)
-    print(f"Training history saved: {history_path}")
+        # Save training curves
+        plot_training_curves(history, results_dir)
+
+        # Save history as JSON
+        history_path = os.path.join(results_dir, "training_history.json")
+        with open(history_path, "w") as f:
+            json.dump(history, f, indent=2)
+        print(f"Training history saved: {history_path}")
+
+    cleanup_distributed()
 
 
 def main():
