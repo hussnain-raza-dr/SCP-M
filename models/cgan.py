@@ -39,11 +39,14 @@ def weights_init_improved(m):
     Orthogonal init provides better gradient flow in deep residual networks
     and is the standard choice in BigGAN and SNGAN.
 
-    Spectral-normed layers are skipped (they manage their own scaling).
+    Spectral-normed layers are initialized via weight_orig (the raw weight
+    tensor that spectral_norm normalizes). Skipping them would leave them
+    with default Kaiming init, which is suboptimal for residual networks.
     """
     classname = m.__class__.__name__
-    # Skip spectral-normed modules (they have weight_orig, not weight)
+    # Spectral-normed modules store weights as weight_orig
     if hasattr(m, "weight_orig"):
+        nn.init.orthogonal_(m.weight_orig.data)
         return
     if "Conv" in classname and hasattr(m, "weight"):
         nn.init.orthogonal_(m.weight.data)

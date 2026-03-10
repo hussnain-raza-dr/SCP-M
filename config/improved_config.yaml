@@ -8,7 +8,7 @@
 #   - Minibatch stddev in D (detects mode collapse)
 #   - Hinge loss (proven with spectral norm)
 #   - Equal LRs: lr_D=lr_G=0.0002 (matching SNGAN paper Table 3)
-#   - 1:1 D:G ratio (SNGAN ResNet uses 1:1 per the paper)
+#   - 5:1 D:G ratio (SNGAN ResNet uses n_dis=5 per Table 1)
 #   - Constant LR (no decay — decay triggers late-stage collapse with SN)
 #   - No R1 penalty (SN alone is sufficient; R1+SN causes D collapse)
 #   - EMA of generator weights
@@ -49,13 +49,12 @@ model:
 training:
   batch_size: 64
   num_epochs: 400
-  # TTUR with G-favoring ratio. Previous attempts:
-  #   - Equal LRs (0.0002/0.0002): G produced gray for 400 epochs (dead generator)
-  #   - D-favoring TTUR (0.0004 D, 0.0001 G): D over-optimized, G couldn't catch up
-  # D is already heavily regularized (spectral norm + hinge + residual), so it
-  # doesn't need a high LR. Give G 2x advantage to escape the gray attractor.
+  # Equal LRs matching SNGAN paper (Miyato et al., 2018, Table 3).
+  # Previous equal-LR attempt failed because d_steps was 1 — the discriminator
+  # was undertrained, not because the LR was wrong. With d_steps=5 (see below),
+  # D gets 5x more updates per G update, which is the paper's configuration.
   lr_g: 0.0002
-  lr_d: 0.0001
+  lr_d: 0.0002
   beta1: 0.0
   beta2: 0.9
   # Weight decay DISABLED on G — combined with gain=0.1 residual init, decay
@@ -64,9 +63,10 @@ training:
   # to prevent the Tanh saturation seen in run 4.
   weight_decay_g: 0.0
   weight_decay_d: 0.0
-  # 1:1 ratio — SNGAN ResNet arch uses 1:1 (Table 1 in the paper)
-  # The residual connections + spectral norm keep D stable without extra steps
-  d_steps: 1
+  # 5:1 D:G ratio — SNGAN paper Table 1 uses n_dis=5 for ResNet architecture.
+  # The discriminator needs more updates to provide meaningful gradients to G.
+  # With d_steps=1, D outputs hover near 0 (D_loss stuck at 2.0, ~50% accuracy).
+  d_steps: 5
   g_steps: 1
   label_smooth_real: 1.0
   label_smooth_fake: 0.0
@@ -102,7 +102,7 @@ training:
 data:
   dataset: "cifar10"
   data_root: "./data/cifar10"
-  num_workers: 4
+  num_workers: 2
   pin_memory: true
   augmentation:
     horizontal_flip: true
