@@ -236,16 +236,6 @@ def train(config, resume_path=None):
         "d_fake_acc": [],
     }
 
-    # Resume from checkpoint
-    start_epoch = 0
-    if resume_path is not None:
-        start_epoch, saved_history = cgan.load_checkpoint(
-            resume_path, optimizer_g, optimizer_d, G_ema=G_ema
-        )
-        if saved_history:
-            history = saved_history
-        print(f"Resumed from epoch {start_epoch}")
-
     # --- Configuration for improved training ---
     loss_type = train_cfg.get("loss_type", "vanilla")
     d_loss_fn = get_d_loss_fn(loss_type)
@@ -271,6 +261,17 @@ def train(config, resume_path=None):
         G_ema = create_ema(G_module)
         if is_main_process():
             print(f"EMA enabled (decay={ema_decay})")
+
+    # Resume from checkpoint (must come after G_ema is created)
+    start_epoch = 0
+    if resume_path is not None:
+        start_epoch, saved_history = cgan.load_checkpoint(
+            resume_path, optimizer_g, optimizer_d, G_ema=G_ema
+        )
+        if saved_history:
+            history = saved_history
+        if is_main_process():
+            print(f"Resumed from epoch {start_epoch}")
 
     if is_main_process():
         print(f"Loss type: {loss_type}")
