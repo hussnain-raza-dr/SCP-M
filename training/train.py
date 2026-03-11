@@ -6,7 +6,7 @@ Supports both baseline (vanilla GAN) and improved configurations:
   - Gradient penalty (WGAN-GP)
   - Exponential moving average (EMA) of generator weights
   - Gradient clipping
-  - Multi-GPU distributed training via MPI + PyTorch DDP
+  - Multi-GPU distributed training via torchrun + PyTorch DDP
 """
 
 import argparse
@@ -46,7 +46,7 @@ from evaluation.visualize import save_image_grid, plot_training_curves
 def setup_distributed():
     """Initialize distributed process group using environment variables.
 
-    Works with both torchrun and mpirun launchers. Returns (rank, world_size)
+    Works with torchrun launcher. Returns (rank, world_size)
     or (0, 1) when running without distributed.
     """
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
@@ -54,18 +54,6 @@ def setup_distributed():
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    elif "OMPI_COMM_WORLD_RANK" in os.environ:
-        # Launched via mpirun (OpenMPI)
-        rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
-        world_size = int(os.environ["OMPI_COMM_WORLD_SIZE"])
-        local_rank = int(os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", 0))
-        os.environ["RANK"] = str(rank)
-        os.environ["WORLD_SIZE"] = str(world_size)
-        os.environ["LOCAL_RANK"] = str(local_rank)
-        if "MASTER_ADDR" not in os.environ:
-            os.environ["MASTER_ADDR"] = "localhost"
-        if "MASTER_PORT" not in os.environ:
-            os.environ["MASTER_PORT"] = "29500"
     else:
         # Single-process, non-distributed
         return 0, 1
