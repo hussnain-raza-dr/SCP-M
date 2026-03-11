@@ -48,7 +48,7 @@ model:
 
 training:
   batch_size: 64
-  num_epochs: 400
+  num_epochs: 100
   # Equal LRs matching SNGAN paper (Miyato et al., 2018, Table 3).
   # Previous equal-LR attempt failed because d_steps was 1 — the discriminator
   # was undertrained, not because the LR was wrong. With d_steps=5 (see below),
