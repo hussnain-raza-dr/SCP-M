@@ -1,0 +1,131 @@
+# =============================================================================
+# Improved Conditional GAN Configuration
+# =============================================================================
+# Strategy: SNGAN with residual architectures (Miyato et al., 2018)
+#
+#   - Residual generator and discriminator (better gradient flow under SN)
+#   - Spectral normalization on all D layers (Lipschitz constraint)
+#   - Minibatch stddev in D (detects mode collapse)
+#   - Hinge loss (proven with spectral norm)
+#   - Equal LRs: lr_D=lr_G=0.0002 (matching SNGAN paper Table 3)
+#   - 5:1 D:G ratio (SNGAN ResNet uses n_dis=5 per Table 1)
+#   - Constant LR (no decay — decay triggers late-stage collapse with SN)
+#   - No R1 penalty (SN alone is sufficient; R1+SN causes D collapse)
+#   - EMA of generator weights
+#   - Standard orthogonal init (gain=0.1 + weight decay starved G → all gray)
+#   - No weight decay on G (combined with small init, it killed the generator)
+#   - Orthogonal weight init (BigGAN/SNGAN standard)
+#
+# The SNGAN paper showed that the ResNet architecture is critical —
+# vanilla DCGAN (3 plain conv layers) has insufficient gradient flow
+# under spectral norm constraint, causing discriminator collapse.
+#
+# NOTE: Do NOT combine spectral norm with WGAN-GP gradient penalty —
+# double-constraining the Lipschitz constant causes the critic to collapse.
+# =============================================================================
+
+model:
+  latent_dim: 128
+  embed_dim: 64
+  num_classes: 10
+  image_channels: 3
+  image_size: 32
+
+  # Wider channels for higher capacity
+  generator_channels: [512, 256, 128]
+  discriminator_channels: [128, 256, 512]
+  leaky_relu_slope: 0.2
+  init_std: 0.02
+
+  # Residual architectures — essential for spectral norm to work
+  # (vanilla DCGAN collapses under SN due to poor gradient flow)
+  generator_type: "improved"
+  discriminator_type: "improved"
+
+  # Spectral norm on D (no BatchNorm — they're incompatible)
+  # Minibatch stddev enabled by default in ImprovedDiscriminator
+  d_normalization: "spectralnorm"
+
+training:
+  batch_size: 64
+  num_epochs: 100
+  # Equal LRs matching SNGAN paper (Miyato et al., 2018, Table 3).
+  # Previous equal-LR attempt failed because d_steps was 1 — the discriminator
+  # was undertrained, not because the LR was wrong. With d_steps=5 (see below),
+  # D gets 5x more updates per G update, which is the paper's configuration.
+  lr_g: 0.0002
+  lr_d: 0.0002
+  beta1: 0.0
+  beta2: 0.9
+  # Weight decay DISABLED on G — combined with gain=0.1 residual init, decay
+  # starved the generator: weights started small and decayed to zero, producing
+  # gray/blank images for all 400 epochs. The gain=0.1 init alone is sufficient
+  # to prevent the Tanh saturation seen in run 4.
+  weight_decay_g: 0.0
+  weight_decay_d: 0.0
+  # 5:1 D:G ratio — SNGAN paper Table 1 uses n_dis=5 for ResNet architecture.
+  # The discriminator needs more updates to provide meaningful gradients to G.
+  # With d_steps=1, D outputs hover near 0 (D_loss stuck at 2.0, ~50% accuracy).
+  d_steps: 5
+  g_steps: 1
+  label_smooth_real: 1.0
+  label_smooth_fake: 0.0
+
+  # Hinge loss — the standard loss for spectral-norm GANs
+  loss_type: "hinge"
+  gp_lambda: 10.0
+
+  # R1 gradient penalty DISABLED — spectral norm already bounds ||∇D|| ≤ 1.
+  # Adding R1 on top of SN double-regularizes D, causing it to collapse:
+  #   - gamma=0.1 (run 1): negligible effect, didn't prevent late-stage divergence
+  #   - gamma=1.0 (run 2): D collapsed to constant output (D_loss=2.0, random acc)
+  # The SNGAN paper uses SN alone with no R1. R1 is designed as an
+  # alternative to SN (e.g., StyleGAN2 uses R1 without SN), not a complement.
+  r1_gamma: 0.0
+
+  # LR decay DISABLED — constant LR throughout training.
+  # LR decay consistently triggers late-stage D-G imbalance:
+  #   - Run 1 (decay at 60%): D_acc(fake) spiked to 1.0 at epoch 175
+  #   - Run 3 (decay at 80%): D_acc(fake) spiked to 0.95 at epoch 350
+  # With SN constraining D, the training equilibrium is stable at constant
+  # LR — run 3 showed good learning for 320 epochs before decay broke it.
+  # Set >= 1.0 to disable (train.py handles this without division by zero).
+  lr_decay_start: 1.0
+
+  # EMA of generator weights for better inference quality
+  use_ema: true
+  ema_decay: 0.999
+
+  grad_clip_g: 0.0
+  grad_clip_d: 0.0
+
+data:
+  dataset: "cifar10"
+  data_root: "./data/cifar10"
+  num_workers: 2
+  pin_memory: true
+  augmentation:
+    horizontal_flip: true
+    horizontal_flip_p: 0.5
+    random_rotation: false
+    random_rotation_degrees: 10
+    color_jitter: false
+    color_jitter_brightness: 0.2
+    color_jitter_contrast: 0.2
+    color_jitter_saturation: 0.2
+    color_jitter_hue: 0.1
+    random_resized_crop: false
+    random_resized_crop_scale_min: 0.8
+    random_resized_crop_scale_max: 1.0
+
+evaluation:
+  save_every: 10
+  sample_every: 5
+  num_sample_per_class: 10
+  log_every: 100
+
+seed: 42
+
+paths:
+  checkpoint_dir: "./checkpoints_improved"
+  results_dir: "./results_improved"
