@@ -1,6 +1,7 @@
 """Dataset loading and preprocessing for CIFAR-10."""
 
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets, transforms
 
 TIN_MEAN = (0.5, 0.5, 0.5)
@@ -61,11 +62,14 @@ def get_test_transform():
     ])
 
 
-def get_dataloaders(config):
+def get_dataloaders(config, distributed=False, rank=0, world_size=1):
     """Create train and test DataLoaders for CIFAR-10.
 
     Args:
         config: dict loaded from YAML config file.
+        distributed: whether to use DistributedSampler for multi-GPU training.
+        rank: process rank (used when distributed=True).
+        world_size: total number of processes (used when distributed=True).
 
     Returns:
         (train_loader, test_loader) tuple of DataLoader objects.
@@ -82,21 +86,28 @@ def get_dataloaders(config):
     train_dataset = datasets.CIFAR10(
         root=data_root,
         train=True,
-        download=True,
+        download=(rank == 0),
         transform=train_transform,
     )
 
     test_dataset = datasets.CIFAR10(
         root=data_root,
         train=False,
-        download=True,
+        download=(rank == 0),
         transform=test_transform,
     )
+
+    train_sampler = None
+    if distributed:
+        train_sampler = DistributedSampler(
+            train_dataset, num_replicas=world_size, rank=rank, shuffle=True,
+        )
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         num_workers=num_workers,
         pin_memory=pin_memory,
         drop_last=True,

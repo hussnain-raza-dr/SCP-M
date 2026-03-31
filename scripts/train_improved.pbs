@@ -1,0 +1,13 @@
+#!/bin/bash
+#PBS -N cgan_improved
+#PBS -l select=1:ncpus=4:ngpus=1:mem=32gb
+#PBS -l walltime=08:00:00
+#PBS -j oe
+#PBS -o logs/train_improved.log
+
+cd $PBS_O_WORKDIR
+mkdir -p logs
+
+source venv311/bin/activate
+
+python training/train.py --config config/improved_config.yaml

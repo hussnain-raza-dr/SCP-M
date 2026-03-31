@@ -1,0 +1,14 @@
+#!/bin/bash
+#PBS -N cgan_evaluate
+#PBS -l select=1:ncpus=4:ngpus=1:mem=32gb
+#PBS -l walltime=01:00:00
+#PBS -j oe
+#PBS -o logs/evaluate.log
+
+cd $PBS_O_WORKDIR
+mkdir -p logs
+
+source venv311/bin/activate
+
+python evaluation/evaluate.py --config config/improved_config.yaml \
+    --checkpoint ./checkpoints_improved/checkpoint_final.pt
